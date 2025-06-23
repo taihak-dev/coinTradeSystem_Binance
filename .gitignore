@@ -1,3 +1,4 @@
 *.xlsx
 .env
 /.venv/
+/db/candle_db.sqlite

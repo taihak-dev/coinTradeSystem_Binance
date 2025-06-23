@@ -4,7 +4,7 @@ import time
 from api.price import get_minute_candles
 from strategy.casino_strategy import generate_buy_orders, generate_sell_orders
 
-INITIAL_CASH = 2_000_000
+INITIAL_CASH = 5_000_000
 BUY_FEE = 0.0005
 SELL_FEE = 0.0005
 

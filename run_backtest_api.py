@@ -1,16 +1,17 @@
-# 시뮬레이터 (실시간)
+# run_backtest_api.py
 
-from manager.simulator import simulate_with_strategy
+from manager.simulator import simulate_with_api
 
-simulate_with_strategy(
-    market="KRW-DOGE",
-    start="2021-05-08 00:00",
-    end="2021-06-25 23:00",
-    unit=1,
-    unit_size=5000,
-    small_flow_pct=0.04,
-    small_flow_units=2,
-    large_flow_pct=0.13,
-    large_flow_units=7,
-    take_profit_pct=0.00575
+# 변경: market 이름을 바이낸스 형식으로, leverage 파라미터 추가
+simulate_with_api(
+    market="DOGEUSDT",
+    start="2025-06-01 00:00:00",
+    end="2025-06-30 23:59:59",
+    unit_size=20,
+    small_flow_pct=0.0055,
+    small_flow_units=1,
+    large_flow_pct=0.0155,
+    large_flow_units=3,
+    take_profit_pct=0.00575,
+    leverage=15
 )

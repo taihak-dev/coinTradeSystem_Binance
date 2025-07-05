@@ -1,7 +1,7 @@
 # api/account.py
 import time
 import requests
-from api.auth import generate_jwt_token
+from api.upbit.auth import generate_jwt_token
 import config
 
 

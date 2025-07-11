@@ -3,8 +3,8 @@
 from manager.simulator_db import simulate_with_db
 
 simulate_with_db(
-    market="XRPUSDT",
-    start="2024-01-01 00:00:00",
+    market="VIRTUALUSDT",
+    start="2025-03-01 00:00:00",
     end="2025-06-31 23:59:59",
     unit_size=20,
     small_flow_pct=0.04,

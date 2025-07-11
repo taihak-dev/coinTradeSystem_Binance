@@ -1,340 +1,251 @@
-# import pandas as pd
-#
-#
-# def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, current_prices: dict) -> pd.DataFrame:
-#     """
-#     카지노 매매 전략에 따라 상황을 판단하고,
-#     각 상황에 따른 매수 주문 내역을 buy_log 형태로 생성/수정하여 리턴한다.
-#     """
-#     print("[casino_strategy.py] generate_buy_orders() 호출됨")
-#
-#     new_logs = []
-#
-#     for _, setting in setting_df.iterrows():
-#         market = setting["market"]
-#         unit_size = setting["unit_size"]
-#         small_pct = setting["small_flow_pct"]
-#         small_units = setting["small_flow_units"]
-#         large_pct = setting["large_flow_pct"]
-#         large_units = setting["large_flow_units"]
-#
-#         current_price = current_prices.get(market)
-#         if current_price is None:
-#             print(f"❌ 현재 가격 없음 → {market}")
-#             continue
-#
-#         coin_logs = buy_log_df[buy_log_df["market"] == market]
-#         initial_logs = coin_logs[coin_logs["buy_type"] == "initial"]
-#         flow_logs = coin_logs[coin_logs["buy_type"].isin(["small_flow", "large_flow"])]
-#
-#         # 수정된 부분 (generate_buy_orders 내부)
-#
-#         # ✅ [상황1] 최초 주문 없음
-#         if coin_logs.empty:
-#             print(f"📌 {market} → 상황1: 최초 주문 생성")
-#
-#             # 데이터 1 - initial
-#             new_logs.append({
-#                 "time": pd.Timestamp.now(),
-#                 "market": market,
-#                 "target_price": current_price,
-#                 "buy_amount": unit_size,
-#                 "buy_units": 1,
-#                 "buy_type": "initial",
-#                 "buy_uuid": None,
-#                 "filled": "update"  # 수정됨
-#             })
-#
-#             # 데이터 2 - small_flow
-#             small_price = round(current_price * (1 - small_pct))
-#             new_logs.append({
-#                 "time": pd.Timestamp.now(),
-#                 "market": market,
-#                 "target_price": small_price,
-#                 "buy_amount": unit_size * small_units,
-#                 "buy_units": small_units,
-#                 "buy_type": "small_flow",
-#                 "buy_uuid": None,
-#                 "filled": "update"  # 수정됨
-#             })
-#
-#             # 데이터 3 - large_flow
-#             large_price = round(current_price * (1 - large_pct))
-#             new_logs.append({
-#                 "time": pd.Timestamp.now(),
-#                 "market": market,
-#                 "target_price": large_price,
-#                 "buy_amount": unit_size * large_units,
-#                 "buy_units": large_units,
-#                 "buy_type": "large_flow",
-#                 "buy_uuid": None,
-#                 "filled": "update"  # 수정됨
-#             })
-#
-#     # ✅ 수정된 상황2: initial filled == done인 코인
-#         elif not initial_logs.empty:
-#             print(f"📌 {market} → 수정된 상황2: flow 주문 개별 처리 시작")
-#
-#             for _, row in flow_logs.iterrows():
-#                 buy_type = row["buy_type"]
-#                 target_price = row["target_price"]
-#                 raw_filled = row["filled"]
-#                 filled = "" if pd.isna(raw_filled) else str(raw_filled).strip()
-#                 row_index = row.name
-#
-#                 if pd.isna(target_price) or pd.isna(row["buy_amount"]) or pd.isna(row["buy_units"]):
-#                     raise ValueError(f"[❌ 에러] {market} - {buy_type} 주문에 누락된 값이 있습니다. 행: {row.to_dict()}")
-#
-#                 target_price = float(target_price)
-#                 unit_pct = small_pct if buy_type == "small_flow" else large_pct
-#
-#                 # case1: wait 상태 → 가격 상향 후 재조정
-#                 if filled == "wait":
-#                     # 가격이 기준 이상으로 상승한 경우 → 매수 기준 재조정
-#                     A = target_price / (1 - unit_pct)
-#                     C = A * (1 + unit_pct / 2)
-#
-#                     if current_price > C:
-#                         new_price = round(C * (1 - unit_pct))
-#                         print(f"↗ {market} {buy_type} 가격 재조정: {target_price} → {new_price}")
-#                         buy_log_df.loc[row_index, "target_price"] = new_price
-#                         buy_log_df.loc[row_index, "filled"] = "update"
-#
-#
-#                 # case2: done 상태 → 동일 비율로 다시 내려서 주문 재생성
-#                 elif filled == "done":
-#                     buy_log_df.at[row_index, "buy_uuid"] = None
-#
-#                     new_price = round(target_price * (1 - unit_pct))
-#                     print(f"🔁 {market} {buy_type} 연속 주문: {target_price} → {new_price}")
-#                     buy_log_df.loc[row_index, "target_price"] = new_price
-#                     buy_log_df.loc[row_index, "filled"] = "update"
-#
-#
-#                 elif pd.isna(filled) or filled == "":
-#                     print(f"📝 {market} {buy_type} 수동 주문 → 필드 유효성 검사")
-#
-#                     # 필수 항목 확인: market, target_price, buy_amount, buy_units, buy_type
-#                     required_columns = ["market", "target_price", "buy_amount", "buy_units", "buy_type"]
-#                     missing_columns = [col for col in required_columns if pd.isna(row[col]) or row[col] == ""]
-#
-#                     if missing_columns:
-#                         raise ValueError(f"[❌ 에러] {market} - {buy_type} 수동 주문에 누락된 필드가 있습니다: {missing_columns}")
-#
-#                     # 이상 없으면 update 처리
-#                     buy_log_df.loc[row_index, "filled"] = "update"
-#
-#                 # case4: cancel 등 기타 상태 → 예외 처리
-#                 else:
-#                     raise ValueError(f"[❌ 에러] {market} - {buy_type} 주문의 filled 상태가 예외적입니다: '{filled}'")
-#
-#     # 새로운 주문이 있다면 기존 로그와 결합
-#     if new_logs:
-#         new_df = pd.DataFrame(new_logs)
-#         buy_log_df = pd.concat([buy_log_df, new_df], ignore_index=True)
-#
-#     return buy_log_df
-#
-#
-# def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: pd.DataFrame) -> pd.DataFrame:
-#     print("[casino_strategy.py] generate_sell_orders() 호출됨")
-#
-#     # 기존 sell_log_df를 복사해서 시작
-#     updated_df = sell_log_df.copy()
-#
-#     for _, row in setting_df.iterrows():
-#         market = row["market"]
-#
-#         # 보유 중인 코인만 대상
-#         if market not in holdings:
-#             continue
-#
-#         h = holdings[market]
-#         avg_buy_price = round(h["avg_price"], 8)
-#         quantity = round(h["balance"] + h["locked"], 8)  # ✅ 수정된 부분
-#         take_profit_pct = row["take_profit_pct"]
-#         target_price = round(avg_buy_price * (1 + take_profit_pct), 8)
-#
-#         # 기존 sell_log에서 해당 market 데이터 있는지 확인
-#         existing_idx = updated_df[updated_df["market"] == market].index
-#
-#         if not existing_idx.empty:
-#             idx = existing_idx[0]
-#             existing = updated_df.loc[idx]
-#
-#             is_same = (
-#                 round(existing["avg_buy_price"], 8) == avg_buy_price and
-#                 round(existing["quantity"], 8) == quantity and
-#                 round(existing["target_sell_price"], 2) == target_price
-#             )
-#
-#             if is_same:
-#                 print(f"✅ {market} → 보유 정보와 동일 → 유지")
-#                 continue
-#
-#             print(f"✏️ {market} → 기존과 차이 있음 → 수정")
-#             updated_df.loc[idx, "avg_buy_price"] = avg_buy_price
-#             updated_df.loc[idx, "quantity"] = quantity
-#             updated_df.loc[idx, "target_sell_price"] = target_price
-#             updated_df.loc[idx, "filled"] = "update"
-#
-#         else:
-#             print(f"🆕 {market} → 새로운 sell_log 생성")
-#             new_row = {
-#                 "market": market,
-#                 "avg_buy_price": avg_buy_price,
-#                 "quantity": quantity,
-#                 "target_sell_price": target_price,
-#                 "sell_uuid": None,
-#                 "filled": "update"
-#             }
-#             updated_df = pd.concat([updated_df, pd.DataFrame([new_row])], ignore_index=True)
-#
-#     return updated_df
-
-# 에러 수정 - gemini 제안에 따라 수정처리 (2025-7-3)
-
 # strategy/casino_strategy.py
 
 import pandas as pd
 from datetime import datetime
+import logging # 로깅 모듈 임포트
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def get_last_filled_price(buy_log_df, market):
+def get_last_filled_price(buy_log_df: pd.DataFrame, market: str) -> float:
+    """
+    해당 마켓의 매수 로그에서 가장 최근에 'done'(체결 완료)된 주문의 'target_price'를 반환합니다.
+    이는 다음 매수 단계의 기준 가격이 됩니다.
+    """
+    # 해당 마켓의 체결 완료된 주문들만 필터링
     filled_orders = buy_log_df[(buy_log_df['market'] == market) & (buy_log_df['filled'] == 'done')]
     if not filled_orders.empty:
-        return filled_orders.iloc[-1]['target_price']
+        # 가장 최근 주문의 target_price 반환
+        last_price = float(filled_orders.iloc[-1]['target_price'])
+        logging.debug(f"🔍 {market}의 마지막 체결 가격: {last_price}")
+        return last_price
+    logging.debug(f"ℹ️ {market}에 체결된 이전 매수 주문이 없습니다.")
     return None
 
 
-def generate_buy_orders(setting_df, buy_log_df, current_prices):
-    print("[casino_strategy.py] generate_buy_orders() 호출됨")
-    new_orders = []
+def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, current_prices: dict) -> pd.DataFrame:
+    """
+    카지노 매매 전략에 따라 현재 상황을 판단하고,
+    각 상황에 따른 매수 주문 내역을 buy_log DataFrame 형태로 생성/수정하여 반환합니다.
+
+    :param setting_df: 각 마켓의 전략 설정 (unit_size, small_flow_pct 등)
+    :param buy_log_df: 현재까지의 매수 주문 로그 DataFrame
+    :param current_prices: 각 마켓의 현재 가격 정보 {market: price}
+    :return: 업데이트된 매수 주문 로그 DataFrame
+    """
+    logging.info("--- ⚙️ 매수 주문 생성 로직 시작 (generate_buy_orders) ---")
+    new_orders_to_add = [] # 새로 추가될 주문 목록
 
     for _, setting in setting_df.iterrows():
         market = setting['market']
+        unit_size = float(setting['unit_size']) # 레버리지 적용된 단위 투자금
+        small_flow_pct = float(setting['small_flow_pct'])
+        small_flow_units = int(setting['small_flow_units'])
+        large_flow_pct = float(setting['large_flow_pct'])
+        large_flow_units = int(setting['large_flow_units'])
+
         current_price = current_prices.get(market)
         if current_price is None:
+            logging.warning(f"❌ {market}의 현재 가격을 알 수 없어 매수 주문을 생성할 수 없습니다.")
             continue
 
         market_buy_log = buy_log_df[buy_log_df['market'] == market].copy()
-        initial_order = market_buy_log[market_buy_log['buy_type'] == 'initial']
+        initial_order_in_log = market_buy_log[market_buy_log['buy_type'] == 'initial']
 
-        if initial_order.empty:
-            print(f"📌 {market} → 상황1: 최초 주문 생성")
-            new_order = {
+        # --- 상황 1: 해당 마켓에 대한 최초(initial) 주문이 없는 경우 ---
+        if initial_order_in_log.empty:
+            logging.info(f"📌 {market}: 최초 주문 생성 시나리오 진입 (Initial Order Missing).")
+
+            # 1. Initial (최초) 매수 주문 생성
+            # 현재 가격을 목표가로 하여 시장가 매수될 예정
+            new_orders_to_add.append({
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "market": market,
-                "target_price": current_price,
-                "buy_amount": setting['unit_size'],
-                "buy_units": 0,
+                "target_price": current_price, # 현재 가격을 목표 가격으로 설정
+                "buy_amount": unit_size, # initial 투자금
+                "buy_units": 0, # initial 주문은 0단계
                 "buy_type": "initial",
-                "buy_uuid": "",
-                "filled": "update"
-            }
-            new_orders.append(new_order)
+                "buy_uuid": "", # 주문 전이므로 UUID 없음
+                "filled": "update" # 새로 생성된 주문이므로 'update' 상태
+            })
+            logging.info(f"  -> {market} initial 매수 주문 추가: 가격={current_price:.8f}, 금액={unit_size:.2f}")
+
+            # Initial 주문이 없으면 flow 주문도 없으므로 여기서 바로 다음 코인으로 넘어감
+            # (Initial 주문이 먼저 체결되어야 다음 flow 주문이 가능)
             continue
 
+        # --- 상황 2: Initial 주문이 존재하고, 다음 Flow 주문들을 관리하는 경우 ---
+        # last_filled_price는 가장 최근에 체결된 매수 주문의 가격 (Initial 또는 Flow)
         last_filled_price = get_last_filled_price(market_buy_log, market)
         if last_filled_price is None:
+            logging.warning(f"⚠️ {market}: Initial 주문은 있지만 아직 체결된 매수 주문이 없어 다음 flow 주문을 생성할 수 없습니다. (last_filled_price 없음)")
             continue
 
-        print(f"📌 {market} → 수정된 상황2: flow 주문 개별 처리 시작")
-        for i in range(1, setting['small_flow_units'] + 1):
-            target_price = last_filled_price * (1 - setting['small_flow_pct'] * i)
+        logging.info(f"📌 {market}: Flow 주문 관리 시나리오 진입. (최근 체결가: {last_filled_price:.8f})")
+
+        # Small Flow (소액 분할 매수) 주문 생성/관리
+        for i in range(1, small_flow_units + 1):
+            target_price = round(last_filled_price * (1 - small_flow_pct * i), 8) # 설정된 비율만큼 하락한 목표 가격
+            buy_amount = unit_size # Small flow 투자 금액
+
+            # 현재 가격이 매수 목표가보다 낮거나 같고 (매수 조건 충족)
             if current_price <= target_price:
-                # --- 여기가 수정된 핵심 부분 ---
-                # 이미 해당 단계의 미체결 flow 주문이 있는지 확인
+                # 이미 해당 단계의 미체결(wait, update) flow 주문이 있는지 확인하여 중복 생성 방지
                 existing_flow_order = market_buy_log[
                     (market_buy_log['buy_type'] == 'small_flow') &
                     (market_buy_log['buy_units'] == i) &
                     (market_buy_log['filled'].isin(['update', 'wait']))
-                    ]
+                ]
                 if not existing_flow_order.empty:
-                    continue  # 이미 주문이 있으므로 건너뜀
-                # --- 여기까지 ---
+                    logging.debug(f"  -> {market} small_flow {i}단계: 이미 대기 중인 주문이 있어 건너뜁니다. (가격: {target_price:.8f})")
+                    continue # 이미 주문이 있으므로 건너뜀
 
-                new_order = {
+                # 새로운 small_flow 주문 추가
+                new_orders_to_add.append({
                     "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "market": market,
                     "target_price": target_price,
-                    "buy_amount": setting['unit_size'],
+                    "buy_amount": buy_amount,
                     "buy_units": i,
                     "buy_type": "small_flow",
                     "buy_uuid": "",
                     "filled": "update"
-                }
-                new_orders.append(new_order)
+                })
+                logging.info(f"  -> {market} small_flow {i}단계 추가: 목표가={target_price:.8f}, 금액={buy_amount:.2f}")
+            else:
+                logging.debug(f"  -> {market} small_flow {i}단계: 매수 조건 미달. (현재가:{current_price:.8f} > 목표가:{target_price:.8f})")
 
-        for i in range(1, setting['large_flow_units'] + 1):
-            target_price = last_filled_price * (1 - setting['large_flow_pct'] * i)
+        # Large Flow (대액 분할 매수) 주문 생성/관리
+        for i in range(1, large_flow_units + 1):
+            target_price = round(last_filled_price * (1 - large_flow_pct * i), 8) # 설정된 비율만큼 하락한 목표 가격
+            buy_amount = unit_size * (large_flow_units / large_flow_units) # Large flow 투자 금액 (예: unit_size * 단계별 배율)
+                                                                       # 현재는 단순히 unit_size만 곱하므로, 설정에 따라 조절 필요
+                                                                       # 예시: unit_size * i 로 각 단계마다 투자금 증가시키려면
+                                                                       # buy_amount = unit_size * i (setting.csv의 large_flow_units와 관계없이)
+            # 여기서는 setting.csv의 large_flow_units를 단순히 '단계 수'로만 사용하고,
+            # 각 단계별 투자 금액은 setting.csv의 'large_flow_units'에 명시된 단위와 일치하게
+            # 즉, large_flow_units가 3이면 3단계 모두 unit_size를 따르도록 하거나, 총 금액을 나누는 방식 등 전략 명확화 필요
+            # 현재는 단순히 unit_size * (large_flow_units / large_flow_units) = unit_size
+            # 이 부분은 전략에 따라 적절한 'buy_amount' 계산 로직으로 변경 필요
+            buy_amount = unit_size * large_flow_units # 예시: large_flow 총 금액을 한 번에 매수 (아니면 단위별로?)
+                                                        # 기존 코드는 'unit_size * large_flow_units'를 매번 추가했음.
+                                                        # 변경된 코드에서는 각 단계마다 buy_amount = unit_size로 설정하는 것이 더 일관적.
+                                                        # -> setting.csv의 unit_size를 각 단계의 투자금으로 본다면
+                                                        # buy_amount = unit_size 로 변경하는 것이 맞음.
+            buy_amount = unit_size # 현재 코드는 unit_size를 그대로 사용
+
             if current_price <= target_price:
-                # --- 여기가 수정된 핵심 부분 ---
                 existing_flow_order = market_buy_log[
                     (market_buy_log['buy_type'] == 'large_flow') &
                     (market_buy_log['buy_units'] == i) &
                     (market_buy_log['filled'].isin(['update', 'wait']))
-                    ]
+                ]
                 if not existing_flow_order.empty:
+                    logging.debug(f"  -> {market} large_flow {i}단계: 이미 대기 중인 주문이 있어 건너뜁니다. (가격: {target_price:.8f})")
                     continue
-                # --- 여기까지 ---
 
-                new_order = {
+                new_orders_to_add.append({
                     "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "market": market,
                     "target_price": target_price,
-                    "buy_amount": setting['unit_size'],
+                    "buy_amount": buy_amount,
                     "buy_units": i,
                     "buy_type": "large_flow",
                     "buy_uuid": "",
                     "filled": "update"
-                }
-                new_orders.append(new_order)
+                })
+                logging.info(f"  -> {market} large_flow {i}단계 추가: 목표가={target_price:.8f}, 금액={buy_amount:.2f}")
+            else:
+                logging.debug(f"  -> {market} large_flow {i}단계: 매수 조건 미달. (현재가:{current_price:.8f} > 목표가:{target_price:.8f})")
 
-    if new_orders:
-        new_df = pd.DataFrame(new_orders)
+
+    # 새로운 주문이 있다면 기존 로그와 결합
+    if new_orders_to_add:
+        new_df = pd.DataFrame(new_orders_to_add)
         buy_log_df = pd.concat([buy_log_df, new_df], ignore_index=True)
+        logging.info(f"✅ 총 {len(new_orders_to_add)}개의 새로운 매수 주문이 buy_log_df에 추가되었습니다.")
+    else:
+        logging.info("ℹ️ 현재 시점에서 추가할 새로운 매수 주문이 없습니다.")
 
+    logging.info("--- ⚙️ 매수 주문 생성 로직 완료 ---")
     return buy_log_df
 
 
-def generate_sell_orders(setting_df, holdings, sell_log_df):
-    print("[casino_strategy.py] generate_sell_orders() 호출됨")
-    updated_df = sell_log_df.copy()
+def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    보유 포지션 및 카지노 매매 전략에 따라 매도 주문 내역을
+    sell_log DataFrame 형태로 생성/수정하여 반환합니다.
+
+    :param setting_df: 각 마켓의 전략 설정 (take_profit_pct 등)
+    :param holdings: 현재 보유 중인 자산 정보 {market: {"balance": float, "avg_price": float}}
+    :param sell_log_df: 현재까지의 매도 주문 로그 DataFrame
+    :return: 업데이트된 매도 주문 로그 DataFrame
+    """
+    logging.info("--- ⚙️ 매도 주문 생성 로직 시작 (generate_sell_orders) ---")
+    updated_df = sell_log_df.copy() # 원본 DataFrame을 변경하지 않기 위해 복사
 
     for market, info in holdings.items():
+        # 매도 대상 코인이지만 보유 수량이 0 이하면 건너김
         if info['balance'] <= 0:
+            logging.debug(f"ℹ️ {market}: 보유 수량이 0이므로 매도 주문을 생성하지 않습니다.")
             continue
 
+        # 해당 마켓의 전략 설정 가져오기
         setting = setting_df[setting_df['market'] == market]
         if setting.empty:
+            logging.warning(f"⚠️ {market}: setting.csv에 대한 전략 설정이 없어 매도 주문을 생성할 수 없습니다.")
             continue
-        setting = setting.iloc[0]
+        setting = setting.iloc[0] # 첫 번째 (유일한) 설정값 가져오기
 
-        avg_buy_price = info['avg_price']
-        take_profit_pct = setting['take_profit_pct']
+        avg_buy_price = info['avg_price'] # 평균 매수 가격
+        quantity_to_sell = info['balance'] # 매도할 수량 (현재 보유량)
+        take_profit_pct = float(setting['take_profit_pct']) # 익절 목표 수익률
 
-        # 소수점 8자리까지 계산하여 정밀도를 높임
-        target_price = round(avg_buy_price * (1 + take_profit_pct), 8)
+        # 목표 매도 가격 계산: 평균 매수 가격 + 익절률
+        target_price = round(avg_buy_price * (1 + take_profit_pct), 8) # 소수점 8자리까지 정밀도 유지
 
+        # 기존 sell_log에서 해당 market에 대한 데이터가 있는지 확인
         existing_sell = updated_df[updated_df['market'] == market]
+
         if not existing_sell.empty:
+            # 기존 매도 주문이 존재하는 경우 업데이트 여부 확인
             existing_row_idx = existing_sell.index[0]
-            if updated_df.at[existing_row_idx, 'target_sell_price'] != target_price:
-                updated_df.at[existing_row_idx, 'target_sell_price'] = target_price
-                updated_df.at[existing_row_idx, 'quantity'] = info['balance']
-                updated_df.at[existing_row_idx, 'filled'] = "update"
-                print(f"🔁 {market} → sell_log 가격 업데이트")
+            existing_avg_buy_price = round(float(updated_df.at[existing_row_idx, 'avg_buy_price']), 8)
+            existing_quantity = round(float(updated_df.at[existing_row_idx, 'quantity']), 8)
+            existing_target_sell_price = round(float(updated_df.at[existing_row_idx, 'target_sell_price']), 8)
+
+            # 현재 보유 정보와 기존 sell_log의 정보가 모두 동일한지 확인
+            is_same = (
+                existing_avg_buy_price == avg_buy_price and
+                existing_quantity == quantity_to_sell and
+                existing_target_sell_price == target_price
+            )
+
+            if is_same:
+                logging.debug(f"✅ {market}: 보유 정보와 매도 주문 정보가 동일 → 기존 주문 유지.")
+                # filled 상태가 "wait"인 경우 그대로 유지. "done"이면 이미 정리되었을 것.
+                continue # 변경 사항이 없으므로 다음 코인으로 넘어감
+
+            # 기존 정보와 다를 경우 업데이트
+            logging.info(f"✏️ {market}: 기존 매도 주문과 보유 정보가 다름 → 매도 주문 수정 (update).")
+            updated_df.at[existing_row_idx, 'avg_buy_price'] = avg_buy_price
+            updated_df.at[existing_row_idx, 'quantity'] = quantity_to_sell
+            updated_df.at[existing_row_idx, 'target_sell_price'] = target_price
+            updated_df.at[existing_row_idx, 'filled'] = "update" # 'update' 상태로 변경하여 order_executor에서 처리하도록 지시
+
         else:
+            # 새로운 매도 주문 생성
+            logging.info(f"🆕 {market}: 새로운 매도 주문 생성.")
             new_row = {
                 "market": market,
                 "avg_buy_price": avg_buy_price,
-                "quantity": info['balance'],
+                "quantity": quantity_to_sell,
                 "target_sell_price": target_price,
-                "sell_uuid": "",
-                "filled": "update"
+                "sell_uuid": "", # 주문 전이므로 UUID 없음
+                "filled": "update" # 새로 생성된 주문이므로 'update' 상태
             }
-            print(f"🆕 {market} → 새로운 sell_log 생성")
             updated_df = pd.concat([updated_df, pd.DataFrame([new_row])], ignore_index=True)
 
+    logging.info("--- ⚙️ 매도 주문 생성 로직 완료 ---")
     return updated_df

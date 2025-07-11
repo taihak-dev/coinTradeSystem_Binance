@@ -3,20 +3,24 @@
 import pandas as pd
 import os
 import sys
-import config # 신규/변경
+import config
+# from api.binance.account import get_accounts # 제거
+# from api.binance.order import get_order_result, cancel_order # 기존
+# from api.binance.price import get_current_ask_price # 제거
+# from api.upbit.account import get_accounts # 제거
+# from api.upbit.order import get_order_results_by_uuids, cancel_orders_by_uuids # 기존
+# from api.upbit.price import get_current_ask_price # 제거
 
-# --- 신규/변경: config 설정에 따라 다른 모듈을 불러오도록 변경 ---
+# config 설정에 따라 다른 모듈을 불러오도록 변경
 if config.EXCHANGE == 'binance':
     print("[SYSTEM] 바이낸스 모드로 매수 로직을 설정합니다.")
-    from api.binance.account import get_accounts
     from api.binance.order import get_order_result, cancel_order
-    from api.binance.price import get_current_ask_price
 else:
     print("[SYSTEM] 업비트 모드로 매수 로직을 설정합니다.")
-    from api.upbit.account import get_accounts
     from api.upbit.order import get_order_results_by_uuids, cancel_orders_by_uuids
-    from api.upbit.price import get_current_ask_price
-# --- 여기까지 ---
+
+# 추가: common_utils에서 get_current_holdings를 import
+from utils.common_utils import get_current_holdings
 
 from manager.order_executor import execute_buy_orders
 from strategy.casino_strategy import generate_buy_orders
@@ -29,7 +33,8 @@ def clean_buy_log_for_fully_sold_coins(buy_log_df: pd.DataFrame, holdings: dict)
     sold_out_markets = all_markets_in_log - valid_markets
 
     if not sold_out_markets:
-        return buy_log_df
+        print("[buy_entry.py] 정리할 매수 주문이 없습니다.") # 로그 추가
+        return buy_log_df[buy_log_df["market"].isin(valid_markets)] # 이미 보유하지 않은 코인이 없다면 바로 필터링
 
     uuids_to_cancel_map = {}
     for market in sold_out_markets:
@@ -39,9 +44,10 @@ def clean_buy_log_for_fully_sold_coins(buy_log_df: pd.DataFrame, holdings: dict)
             uuids_to_cancel_map[market] = uuids
 
     if not uuids_to_cancel_map:
+         print("[buy_entry.py] 취소할 매수 주문이 없습니다.") # 로그 추가
          return buy_log_df[buy_log_df["market"].isin(valid_markets)]
 
-    # --- 신규/변경: 거래소별 주문 취소 로직 ---
+    # --- 기존 코드와 동일 ---
     if config.EXCHANGE == 'binance':
         success_count = 0
         for market, uuids in uuids_to_cancel_map.items():
@@ -62,6 +68,7 @@ def clean_buy_log_for_fully_sold_coins(buy_log_df: pd.DataFrame, holdings: dict)
     # --- 여기까지 ---
 
     # 최종적으로 보유 코인에 대한 로그만 남김
+    print(f"[buy_entry.py] 정리 후 남은 매수 주문 수: {len(buy_log_df[buy_log_df['market'].isin(valid_markets)])}") # 로그 추가
     return buy_log_df[buy_log_df["market"].isin(valid_markets)]
 
 
@@ -70,73 +77,34 @@ def load_setting_data():
     return pd.read_csv("setting.csv")
 
 
-def get_current_holdings():
-    print("[buy_entry.py] 현재 보유 자산 조회 중")
-    accounts = get_accounts()
-    holdings = {}
-
-    # 신규/변경: 기준 통화 변경 (KRW -> USDT)
-    base_currency = 'USDT' if config.EXCHANGE == 'binance' else 'KRW'
-
-    for acc in accounts:
-        if acc['currency'] == base_currency:
-            continue
-
-        # 신규/변경: 바이낸스는 market 이름이 이미 'BTCUSDT' 형태임
-        if config.EXCHANGE == 'binance':
-             market = acc['currency']
-        else:
-             market = f"{base_currency}-{acc['currency']}"
-
-        balance = float(acc['balance']) + float(acc['locked'])
-        avg_price = float(acc['avg_buy_price'])
-
-        if balance * avg_price < 1: # 1 USDT 또는 1 KRW 미만은 무시
-            continue
-
-        try:
-            current_price = get_current_ask_price(market)
-        except Exception as e:
-            print(f"❌ {market} 현재가 조회 실패: {e}")
-            continue
-
-        total_value = balance * current_price
-
-        # 신규/변경: 최소 보유금액 기준 상향 (100원 -> 5 USDT)
-        min_value = 5 if config.EXCHANGE == 'binance' else 100
-        if total_value < min_value:
-            continue
-
-        holdings[market] = {
-            "balance": balance, "avg_price": avg_price,
-            "current_price": current_price, "total_value": total_value
-        }
-
-    print(f"[buy_entry.py] 현재 보유 중인 코인 수: {len(holdings)}개")
-    return holdings
+# --- 기존 get_current_holdings 함수는 utils/common_utils.py로 이동 ---
 
 
 def update_buy_log_status():
     print("[buy_entry.py] buy_log.csv 주문 체결 여부 확인 중")
     try:
         df = pd.read_csv("buy_log.csv")
-        if df.empty: return
+        if df.empty:
+            print("[buy_entry.py] buy_log.csv가 비어있습니다. 확인할 주문이 없습니다.") # 로그 추가
+            return
     except FileNotFoundError:
+        print("[buy_entry.py] buy_log.csv 파일이 없습니다. 생성될 예정입니다.") # 로그 추가
         return
 
     pending_df = df[df["filled"] == "wait"]
     if pending_df.empty:
-        print("[buy_entry.py] 확인할 주문이 없습니다.")
+        print("[buy_entry.py] 확인할 미체결 매수 주문이 없습니다.") # 로그 추가
         return
 
     changed = False
-    # --- 신규/변경: 거래소별 주문 상태 조회 로직 ---
+    # --- 기존 코드와 동일 ---
     if config.EXCHANGE == 'binance':
         for idx, row in pending_df.iterrows():
             uuid = str(row["buy_uuid"])
             market = row["market"]
             try:
                 result = get_order_result(uuid, market)
+                # 바이낸스 API 응답 상태와 로컬 상태가 다를 경우 업데이트
                 if df.at[idx, "filled"] != result['state']:
                     df.at[idx, "filled"] = result['state']
                     print(f"주문 상태 변경: {market} (id:{uuid}) -> {result['state']}")
@@ -147,10 +115,11 @@ def update_buy_log_status():
         uuid_list = pending_df["buy_uuid"].tolist()
         try:
             status_map = get_order_results_by_uuids(uuid_list)
-            for idx, row in df.iterrows():
+            for idx, row in df.iterrows(): # 전체 df를 순회하며 상태 업데이트
                 uuid = row["buy_uuid"]
                 if uuid in status_map and df.at[idx, "filled"] != status_map[uuid]:
                     df.at[idx, "filled"] = status_map[uuid]
+                    print(f"주문 상태 변경: {row['market']} (id:{uuid}) -> {status_map[uuid]}") # 로그 추가
                     changed = True
         except Exception as e:
             print(f"주문 상태 조회 중 오류: {e}")
@@ -159,13 +128,15 @@ def update_buy_log_status():
     if changed:
         df.to_csv("buy_log.csv", index=False)
         print("[buy_entry.py] buy_log.csv 업데이트 완료")
+    else:
+        print("[buy_entry.py] buy_log.csv 변경 사항 없음.") # 로그 추가
 
 
 def run_buy_entry_flow():
     print("[buy_entry.py] 카지노 매매 전략 - 매수 로직 시작")
 
     setting_df = load_setting_data()
-    holdings = get_current_holdings()
+    holdings = get_current_holdings() # common_utils에서 import된 함수 호출
 
     update_buy_log_status()
 
@@ -182,21 +153,27 @@ def run_buy_entry_flow():
 
     print("[buy_entry.py] 현재 가격 수집 중...")
     current_prices = {}
+    # settings_df에 있는 모든 market에 대한 현재 가격을 조회
     for market in setting_df["market"].unique():
         try:
+            # common_utils에서 get_current_ask_price를 import하지 않았으므로
+            # api.binance.price.get_current_ask_price (또는 upbit)를 직접 호출
+            if config.EXCHANGE == 'binance':
+                from api.binance.price import get_current_ask_price
+            else:
+                from api.upbit.price import get_current_ask_price
             current_prices[market] = get_current_ask_price(market)
         except Exception as e:
-            print(f"❌ {market} 가격 조회 실패: {e}")
+            print(f"❌ {market} 현재가 조회 실패: {e}")
 
     updated_buy_log_df = generate_buy_orders(setting_df, buy_log_df, current_prices)
 
     try:
-        # 신규/변경: execute_buy_orders 호출 시 setting_df 추가
         updated_buy_log_df = execute_buy_orders(updated_buy_log_df, setting_df)
         updated_buy_log_df.to_csv("buy_log.csv", index=False)
         print("[buy_entry.py] 모든 주문 완료 → buy_log.csv 저장 완료")
     except Exception as e:
-        print(f"🚨 주문 실패: {e}", file=sys.stderr)
+        print(f"🚨 주문 실행 중 치명적인 오류 발생: {e}", file=sys.stderr) # 오류 메시지 명확화
         sys.exit(1)
 
     print("[buy_entry.py] 매수 전략 흐름 종료")

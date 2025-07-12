@@ -1,1 +1,1 @@
-﻿# coinTradeSystem_upbit
+﻿# coinTradeSystem_binance

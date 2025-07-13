@@ -7,28 +7,26 @@ import os
 import sys
 import config
 from datetime import datetime
-from dotenv import load_dotenv
+from dotenv import load_dotenv  #
 
 # .env 파일 로드 (가장 먼저 실행되는 코드 중 하나여야 함)
-load_dotenv()
+load_dotenv()  #
 
 # common_utils 모듈 자체를 임포트
 import utils.common_utils
 
-# 바이낸스 모듈
-from api.binance.client import get_binance_client
-from api.binance.account import get_accounts as get_binance_accounts
-from api.binance.order import get_order_result, cancel_order
-from api.binance.price import get_current_ask_price, get_current_bid_price
+# 바이낸스 모듈 (main.py에서 직접 사용되는 것만 남김)
+# get_order_result, cancel_order, get_current_ask_price, get_current_bid_price는
+# main.py에서 직접 호출되지 않으므로 제거함.
+from api.binance.account import get_accounts as get_binance_accounts  # 계좌 정보 조회 (main에서 직접 사용)
 
-# 매매 로직
+# 매매 로직 (entry.py는 main에서 직접 호출)
 from strategy.entry import run_casino_entry
 
-# 텔레그램 알림 모듈
+# 텔레그램 알림 모듈 (main에서 직접 사용)
 from utils.telegram_notifier import (
     notify_bot_status,
     notify_error,
-    notify_order_event,
     notify_position_summary,
     notify_liquidation_warning,
     notify_liquidation_occurred
@@ -114,6 +112,8 @@ def main():
     last_liquidation_warning_times = {}  # 매번 main() 시작 시 초기화
 
     # ⭐⭐ UnboundLocalError 해결: open_positions_for_summary 변수를 미리 초기화 ⭐⭐
+    # 이 변수는 while True 루프의 첫 실행 시점이나, 포지션 요약 주기가 아닐 때 사용될 수 있으므로
+    # 루프 바깥에서 초기화하여 항상 정의된 상태를 보장합니다.
     open_positions_for_summary = {}
 
     # CSV 파일 검사 및 초기화
@@ -134,17 +134,20 @@ def main():
             last_health_check_time = current_time
 
         # 주기적인 포지션 현황 요약 알림
-        # 이 블록이 실행되지 않는 첫 루프에도 open_positions_for_summary가 정의되어 있도록 위에서 초기화함.
+        # 이 블록은 config.POSITION_SUMMARY_INTERVAL_SECONDS 주기에 따라 실행됩니다.
         if current_time - last_position_summary_time >= config.POSITION_SUMMARY_INTERVAL_SECONDS:
             account_data = get_binance_accounts()  # api.binance.account에서 계좌 정보 가져옴
             usdt_balance = account_data.get("usdt_balance", 0.0)
 
-            open_positions_raw = account_data.get("open_positions", [])
+            # ⭐⭐ 수정: "positions" 대신 "open_positions" 사용 ⭐⭐
+            open_positions_raw = account_data.get("open_positions", [])  # account.py에서 반환되는 open_positions
 
             # 총 포트폴리오 가치 계산 (현금 + 포지션 가치)
             total_portfolio_value = usdt_balance
-            # 이 초기화는 최신 데이터를 받아 덮어쓰는 역할을 합니다.
-            open_positions_for_summary = {}
+
+            # ⭐⭐ 수정: 이 위치의 open_positions_for_summary 초기화는 제거합니다. ⭐⭐
+            # 변수는 이미 main() 함수 시작 시 초기화되었고, 여기서 값을 업데이트할 것입니다.
+            # open_positions_for_summary = {} # <- 이 라인 제거
 
             for pos in open_positions_raw:
                 market = pos.get('symbol')
@@ -160,7 +163,7 @@ def main():
                     position_side = pos.get('positionSide', 'UNKNOWN')
 
                     total_portfolio_value += position_amt * mark_price  # 시장가 기준 포지션 가치 추가
-                    open_positions_for_summary[market] = {
+                    open_positions_for_summary[market] = {  # open_positions_for_summary는 여기에서 채워집니다.
                         "quantity": position_amt,
                         "entry_price": entry_price,
                         "mark_price": mark_price,
@@ -183,6 +186,7 @@ def main():
             last_position_summary_time = current_time
 
         # 청산 위험 알림 로직 (open_positions_for_summary 활용)
+        # 이 루프는 매 주기 실행되며, open_positions_for_summary가 비어있으면 루프가 돌지 않습니다.
         for market, pos_info in open_positions_for_summary.items():
             liquidation_price = pos_info.get('liquidation_price', 0.0)
             mark_price = pos_info.get('mark_price', 0.0)
@@ -205,6 +209,7 @@ def main():
                 # 반대로 청산가에서 멀어질수록 퍼센트가 커짐.
                 # 직관적인 이해를 위해 '청산까지 남은 %'를 계산.
                 if mark_price > liquidation_price:  # 아직 청산가 위에 있을 때
+                    # 0으로 나누는 것을 방지. 진입가와 청산가가 같으면 청산 위험도 0으로 간주.
                     remaining_pct = (mark_price - liquidation_price) / (entry_price - liquidation_price) * 100 if (
                                                                                                                               entry_price - liquidation_price) > 0 else 0
                 else:  # 이미 청산가에 도달했거나 넘어섰을 때

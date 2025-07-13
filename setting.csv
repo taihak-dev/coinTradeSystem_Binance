@@ -1,2 +1,4 @@
 market,unit_size,small_flow_pct,small_flow_units,large_flow_pct,large_flow_units,take_profit_pct,leverage,margin_type
-DOGEUSDT,30,0.04,2,0.13,14,0.00575,1,CROSSED
+ETHUSDT,300,0.04,2,0.13,14,0.00575,15,CROSSED
+DOGEUSDT,300,0.04,2,0.13,14,0.00575,15,CROSSED
+SUISDT,300,0.04,2,0.13,14,0.00575,15,CROSSED

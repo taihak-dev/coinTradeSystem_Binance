@@ -65,6 +65,9 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 else:
                     leverage = int(coin_setting.iloc[0]['leverage'])
                     margin_type = str(coin_setting.iloc[0]['margin_type']).upper()
+                    # 전략에 따라 롱/숏 포지션 진입 시 사용할 position_side를 가져옴.
+                    # 여기서는 매수(롱)이므로 'LONG' 또는 'BOTH'를 가정 (setting.csv에 필드 추가 필요)
+                    # 현재는 'LONG'으로 고정 (아래 send_order 호출 부분 참고)
 
                     client = get_binance_client()  # 인증된 바이낸스 클라이언트 가져오기
 
@@ -119,12 +122,10 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
 
         buy_type = row["buy_type"]  # initial, small_flow, large_flow
 
-        # 바이낸스 시장가 매수(initial)는 amount_usdt (금액)으로, 지정가 매수는 volume (수량)으로 처리
-        # 업비트는 시장가 매수 시 KRW 금액 기준으로 수량 계산
         volume_to_order = 0.0  # 실제 주문에 사용될 수량 (코인 개수)
 
         if config.EXCHANGE == 'binance':
-            if buy_type != "initial":  # 지정가 주문
+            if buy_type != "initial":  # 지정가 주문 (initial은 시장가)
                 # 금액 / 가격 = 수량 (buy_amount_usdt_or_krw는 여기서 USDT 금액임)
                 volume_to_order = buy_amount_usdt_or_krw / price if price > 0 else 0
                 volume_to_order = adjust_quantity_to_step(market, volume_to_order)  # 수량 보정
@@ -132,11 +133,9 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
             # initial (시장가)의 경우 send_order 내부에서 amount_usdt를 통해 수량 계산 및 보정
         else:  # 업비트
             price = adjust_price_to_tick(price, market="KRW", ticker=market)  # 업비트 전용 가격 조정 유틸리티 사용
-            # 업비트 시장가 매수는 amount_krw(금액)으로, 지정가 매수는 volume(수량)으로.
-            # 여기서는 buy_amount_usdt_or_krw가 KRW 금액이므로, 지정가일 경우 수량 계산
             volume_to_order = round(buy_amount_usdt_or_krw / price, 8) if price > 0 else 0
 
-        # case1: 기존 주문을 취소하고 새로운 주문을 제출하는 정정 주문 (Upbit의 cancel_and_new 또는 Binance의 취소+신규)
+        # case1: 기존 주문을 취소하고 새로운 주문을 제출하는 정정 주문 (filled='update' 이면서 uuid가 있는 경우)
         if filled == "update" and uuid:
             logging.info(
                 f"🔁 정정 매수 주문 시도: {market}, 기존 UUID={uuid}, 요청 금액/수량={buy_amount_usdt_or_krw:.2f}/{volume_to_order:.4f}, 가격={price:.8f}")
@@ -144,7 +143,11 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 if config.EXCHANGE == 'binance':
                     # 바이낸스는 cancel_and_new_order_binance 함수를 사용 (직접 구현)
                     response = cancel_and_new_order_binance(
-                        prev_order_uuid=uuid, symbol=market, price=price, quantity=volume_to_order  # 'quantity' 사용
+                        prev_order_uuid=uuid,
+                        symbol=market,
+                        price=price,
+                        quantity=volume_to_order,
+                        position_side="LONG" # 매수 주문은 롱 포지션 진입
                     )
                 else:  # 업비트 (업비트 고유의 정정 주문 API)
                     response = cancel_and_new_order(
@@ -152,7 +155,7 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                     )
 
                 # 바이낸스 응답에서 'orderId'를 사용하고, 업비트 응답에서 'new_order_uuid'를 사용
-                new_order_uuid = response.get("orderId", "") if config.EXCHANGE == 'binance' else response.get(
+                new_order_uuid = response.get("uuid", "") if config.EXCHANGE == 'binance' else response.get(
                     "new_order_uuid", "")
 
                 if new_order_uuid:
@@ -198,20 +201,20 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                         # 바이낸스 시장가 매수 (USDT 금액 기준)
                         response = send_order(
                             market=market,
-                            side="bid",  # 매수 (내부적으로 "BUY"로 변환)
-                            type="price",  # 'ord_type' -> 'type' 으로 변경 (내부적으로 "MARKET"으로 변환)
-                            amount_usdt=buy_amount_usdt_or_krw,  # 'amount_krw' -> 'amount_usdt'로 변경
-                            position_side="LONG"  # 롱 포지션 진입 (전략에 따라 조절)
+                            side="bid",  # 매수
+                            type="market",  # MARKET 타입
+                            amount_usdt=buy_amount_usdt_or_krw,  # 'amount_usdt'로 금액 전달
+                            position_side="LONG"  # 롱 포지션 진입
                         )
                     else:
                         # 바이낸스 지정가 매수
                         response = send_order(
                             market=market,
                             side="bid",  # 매수
-                            type="limit",  # 'ord_type' -> 'type' 으로 변경 (내부적으로 "LIMIT"으로 변환)
-                            price=price,  # 'unit_price' -> 'price'로 변경
-                            volume=volume_to_order,  # 'volume' 사용
-                            position_side="LONG"  # 롱 포지션 진입 (전략에 따라 조절)
+                            type="limit",  # LIMIT 타입
+                            price=price,  # 'price'로 가격 전달
+                            volume=volume_to_order,  # 'volume'으로 수량 전달
+                            position_side="LONG"  # 롱 포지션 진입
                         )
                 else:  # 업비트
                     if buy_type == "initial":
@@ -224,7 +227,7 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                                               volume=volume_to_order)
 
                 # 바이낸스 응답에서 'orderId'를 사용하고, 업비트 응답에서 'uuid'를 사용
-                new_order_uuid = response.get("orderId", "") if config.EXCHANGE == 'binance' else response.get("uuid",
+                new_order_uuid = response.get("uuid", "") if config.EXCHANGE == 'binance' else response.get("uuid",
                                                                                                                "")
 
                 if new_order_uuid:
@@ -320,10 +323,10 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                     # 새로운 지정가 매도 주문 제출
                     response = send_order(
                         market=market,
-                        side="ask",  # 매도 (내부적으로 "SELL"로 변환)
-                        type="limit",  # 'ord_type' -> 'type' 으로 변경 (내부적으로 "LIMIT"으로 변환)
-                        price=price,  # 'unit_price' -> 'price'로 변경
-                        volume=volume_to_order,  # 'volume' 사용
+                        side="ask",  # 매도
+                        type="limit",  # LIMIT 타입
+                        price=price,  # 'price'로 가격 전달
+                        volume=volume_to_order,  # 'volume'으로 수량 전달
                         position_side="LONG"  # 롱 포지션 청산 (전략에 따라 조절)
                     )
                 else:  # 업비트 (업비트는 매도 정정 주문 API가 없으므로 항상 신규 주문만)
@@ -331,7 +334,7 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                                           volume=volume_to_order)
 
                 # 바이낸스 응답에서 'orderId'를 사용하고, 업비트 응답에서 'uuid'를 사용
-                new_order_uuid = response.get("orderId", "") if config.EXCHANGE == 'binance' else response.get("uuid",
+                new_order_uuid = response.get("uuid", "") if config.EXCHANGE == 'binance' else response.get("uuid",
                                                                                                                "")
 
                 if new_order_uuid:

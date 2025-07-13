@@ -5,6 +5,7 @@ from api.binance.client import get_public_binance_client # 공용 클라이언�
 from typing import List, Dict, Optional
 import pandas as pd
 import time
+from datetime import timedelta
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

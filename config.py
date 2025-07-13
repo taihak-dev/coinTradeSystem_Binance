@@ -1,9 +1,26 @@
 # config.py
 import os
 from dotenv import dotenv_values
+from dotenv import load_dotenv # <-- 추가
+load_dotenv() # <-- 추가
 
 # .env 파일 로드
 _env_vars = dotenv_values()
+
+# 텔레그램 알림 설정 (추가)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN") # BotFather에서 받은 토큰
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")     # @get_id_bot 에서 받은 Chat ID
+
+# 기타 설정
+RUN_INTERVAL_SECONDS = int(os.getenv("RUN_INTERVAL_SECONDS", "5")) # 메인 루프 실행 주기 (초)
+
+# 알림 주기 설정
+HEALTH_CHECK_INTERVAL_SECONDS = int(os.getenv("HEALTH_CHECK_INTERVAL_SECONDS", "3600")) # 봇 정상 동작 알림 주기 (1시간)
+POSITION_SUMMARY_INTERVAL_SECONDS = int(os.getenv("POSITION_SUMMARY_INTERVAL_SECONDS", "21600")) # 포지션 현황 요약 알림 주기 (6시간)
+
+# 청산 위험 알림 임계치 설정
+LIQUIDATION_WARNING_PCT_1 = float(os.getenv("LIQUIDATION_WARNING_PCT_1", "0.10")) # 1단계 경고: 청산까지 10% 남았을 때
+LIQUIDATION_WARNING_PCT_2 = float(os.getenv("LIQUIDATION_WARNING_PCT_2", "0.05")) # 2단계 경고: 청산까지 5% 남았을 때
 
 # 업비트 설정
 UPBIT_OPEN_API_ACCESS_KEY = _env_vars.get("UPBIT_OPEN_API_ACCESS_KEY", "")

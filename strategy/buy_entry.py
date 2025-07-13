@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import sys
 import config
+from utils.telegram_notifier import notify_order_event, notify_error
 # from api.binance.account import get_accounts # 제거
 # from api.binance.order import get_order_result, cancel_order # 기존
 # from api.binance.price import get_current_ask_price # 제거
@@ -54,6 +55,7 @@ def clean_buy_log_for_fully_sold_coins(buy_log_df: pd.DataFrame, holdings: dict)
             for uuid in uuids:
                 try:
                     cancel_order(str(uuid), market)
+                    notify_order_event("취소", market, {"reason": "매도 완료된 코인 매수 주문 취소", "order_id": uuid})
                     success_count += 1
                 except Exception as e:
                     print(f"⚠️ {market} 주문(id:{uuid}) 취소 실패: {e}")

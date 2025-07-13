@@ -3,6 +3,7 @@
 import pandas as pd
 import config
 from binance.error import ClientError
+from utils.telegram_notifier import notify_order_event, notify_error # 알림 모듈 임포트
 import logging
 import time  # time 모듈 임포트 (딜레이를 위해 필요)
 
@@ -162,6 +163,14 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                     buy_log_df.at[idx, "buy_uuid"] = new_order_uuid
                     buy_log_df.at[idx, "filled"] = "wait"  # 주문 제출 후 대기 상태로 변경
                     logging.info(f"✅ {market} 정정 매수 주문 제출 완료. 새로운 UUID: {new_order_uuid}")
+                    notify_order_event("제출", market, {
+                        "quantity": volume_to_order if config.EXCHANGE != 'binance' or buy_type != 'initial' else (
+                            buy_amount_usdt_or_krw / price if price > 0 else 0),
+                        "price": price,
+                        "type": buy_type,
+                        "leverage": int(setting_df[setting_df['market'] == market].iloc[0][
+                                            'leverage']) if config.EXCHANGE == 'binance' else 'N/A'
+                    })
                 else:
                     # cancel_and_new_order_binance에서 {"error": "done_order"}가 반환될 수 있음
                     if response.get("error") == "done_order":
@@ -175,6 +184,7 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 if e.error_code == -1003:  # Too much request weight used
                     logging.critical(
                         f"❌ API Rate Limit 초과 (ClientError: {e.error_code}): {e.error_message}. 60초 후 다시 시도합니다.")
+                    notify_order_event("실패", market, {"reason": f"API 오류: {e.error_code} - {e.error_message}"})
                     time.sleep(60)  # 긴 딜레이 후 재시도
                     all_success = False
                     continue
@@ -240,6 +250,7 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 if e.error_code == -1003:  # Too much request weight used
                     logging.critical(
                         f"❌ API Rate Limit 초과 (ClientError: {e.error_code}): {e.error_message}. 60초 후 다시 시도합니다.")
+                    notify_order_event("실패", market, {"reason": f"알 수 없는 오류: {e}"})                    #
                     time.sleep(60)  # 긴 딜레이 후 재시도
                     all_success = False
                     continue

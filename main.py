@@ -210,8 +210,8 @@ def main():
                 # 직관적인 이해를 위해 '청산까지 남은 %'를 계산.
                 if mark_price > liquidation_price:  # 아직 청산가 위에 있을 때
                     # 0으로 나누는 것을 방지. 진입가와 청산가가 같으면 청산 위험도 0으로 간주.
-                    remaining_pct = (mark_price - liquidation_price) / (entry_price - liquidation_price) * 100 if (
-                                                                                                                              entry_price - liquidation_price) > 0 else 0
+                    remaining_pct = (mark_price - liquidation_price) / (entry_price - liquidation_price) * 100 \
+                    if (entry_price - liquidation_price) > 0 else 0
                 else:  # 이미 청산가에 도달했거나 넘어섰을 때
                     remaining_pct = 0  # 0% 남음 또는 이미 초과
 

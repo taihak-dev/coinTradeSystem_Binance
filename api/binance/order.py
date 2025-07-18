@@ -65,95 +65,67 @@ def _place_order(symbol: str, side: str, positionSide: str, type: str,
 
 def send_order(market: str, side: str, type: str,
                amount_usdt: float = None, price: float = None, volume: float = None,
-               position_side: str = "BOTH") -> dict:  # position_side 매개변수 추가 및 기본값 설정
-    """
-    매수/매도 주문을 제출합니다. 바이낸스 선물 거래에 특화되어 있습니다.
-
-    :param market: 마켓 심볼 (예: BTCUSDT)
-    :param side: "bid" (매수) 또는 "ask" (매도)
-    :param type: "market" (시장가) 또는 "limit" (지정가)
-    :param amount_usdt: 시장가 매수 시 주문할 USDT 금액
-    :param price: 지정가 주문 시 가격 (매수/매도)
-    :param volume: 지정가 주문 시 수량 (코인 개수) 또는 시장가 매도 시 수량
-    :param position_side: LONG, SHORT 또는 BOTH (헷지 모드 사용 시 필수, 기본값 BOTH)
-    :return: 주문 응답 딕셔너리 (Upbit의 UUID와 유사하게 'orderId'를 'uuid'로 매핑)
-    """
+               position_side: str = "BOTH") -> dict:
     binance_side = "BUY" if side == "bid" else "SELL"
-    binance_type = type.upper()  # "market" -> "MARKET", "limit" -> "LIMIT"
+    binance_type = type.upper()
+
+    order_params = {
+        'symbol': market,
+        'side': binance_side,
+        'positionSide': position_side,
+        'type': binance_type,
+    }
 
     if binance_type == "MARKET":
         if binance_side == "BUY":
             if amount_usdt is None:
                 raise ValueError("시장가 매수 주문은 'amount_usdt'(매수 금액)를 필수로 지정해야 합니다.")
+            order_params['quoteOrderQty'] = amount_usdt
+            response = _place_order(**order_params)
 
-            # ⭐⭐⭐ 핵심 수정 부분: 시장가 매수 시에도 수량을 직접 계산하여 quantity로 전달 ⭐⭐⭐
-            try:
-                # 현재 시장가를 조회하여 수량 계산에 사용
-                current_market_price = get_current_ask_price(market)  # <--- 이 함수를 사용!
-                if current_market_price <= 0:
-                    raise ValueError(f"유효하지 않은 현재 시장가: {current_market_price}")
-            except Exception as e:
-                logging.error(f"❌ 시장가 매수 시 {market} 현재가 조회 실패: {e}")
-                raise
-
-            calculated_quantity = amount_usdt / current_market_price
-            adjusted_quantity = adjust_quantity_to_step(market, calculated_quantity)
-
-            if adjusted_quantity <= 0:
-                logging.warning(
-                    f"⚠️ {market} 시장가 매수 수량 조정 결과 0이하. 주문 취소. (원본 금액: {amount_usdt}, 계산 수량: {calculated_quantity})")
-                return {"error": "adjusted_quantity_zero"}  # 주문 불가 에러 반환
-
-            response = _place_order(
-                symbol=market,
-                side=binance_side,
-                positionSide=position_side,  # 매개변수 사용
-                type=binance_type,
-                quantity=adjusted_quantity  # <--- 계산된 조정 수량을 quantity로 전달
-            )
         else:  # binance_side == "SELL" (시장가 매도)
             if volume is None:
                 raise ValueError("시장가 매도 주문은 'volume'(수량)을 필수로 지정해야 합니다.")
-            # 시장가 매도: quantity (코인 수량) 사용
-            # 수량 보정 (adjust_quantity_to_step)은 이곳에서 적용 가능
-            # 바이낸스는 시장가 매도 시에도 quantity를 보정해야 함
             adjusted_volume = adjust_quantity_to_step(market, volume)
             if adjusted_volume <= 0:
                 logging.warning(f"⚠️ {market} 시장가 매도 수량 조정 결과 0이하. 주문 취소. (원본: {volume})")
-                return {"error": "adjusted_quantity_zero"}  # 주문 불가 에러 반환
+                return {"error": "adjusted_quantity_zero"}
 
-            response = _place_order(
-                symbol=market,
-                side=binance_side,
-                positionSide=position_side,  # 매개변수 사용
-                type=binance_type,
-                quantity=adjusted_volume  # 조정된 수량 사용
-            )
+            # ⭐⭐ 수정: closePosition=True일 때는 quantity를 보내지 않음 ⭐⭐
+            # order_params['quantity'] = adjusted_volume # 이 줄을 삭제하거나 조건부로 변경
+            order_params['closePosition'] = True  # 전량 매도
+
+            # 아래와 같이 변경하여 quantity를 보내지 않도록 합니다.
+            # quantity가 필수 파라미터가 아니므로, closePosition=True가 있다면 quantity를 추가하지 않음.
+            if 'closePosition' not in order_params or not order_params[
+                'closePosition']:  # closePosition이 없거나 False일 때만 quantity 추가
+                order_params['quantity'] = adjusted_volume
+
+            response = _place_order(**order_params)
+
     elif binance_type == "LIMIT":
         if price is None or volume is None:
             raise ValueError("지정가 주문은 'price'와 'volume'을 필수로 지정해야 합니다.")
 
-        # 지정가 주문: quantity 및 price 사용
-        # 수량 보정 (adjust_quantity_to_step)은 이곳에서 적용 가능
         adjusted_volume = adjust_quantity_to_step(market, volume)
         if adjusted_volume <= 0:
             logging.warning(f"⚠️ {market} 지정가 주문 수량 조정 결과 0이하. 주문 취소. (원본: {volume})")
-            return {"error": "adjusted_quantity_zero"}  # 주문 불가 에러 반환
+            return {"error": "adjusted_quantity_zero"}
 
-        response = _place_order(
-            symbol=market,
-            side=binance_side,
-            positionSide=position_side,  # 매개변수 사용
-            type=binance_type,
-            quantity=adjusted_volume,  # 조정된 수량 사용
-            price=price,
-            timeInForce="GTC"  # Good Till Cancelled
-        )
+        # ⭐⭐ 수정: closePosition=True일 때는 quantity를 보내지 않음 ⭐⭐
+        # order_params['quantity'] = adjusted_volume # 이 줄을 삭제하거나 조건부로 변경
+        order_params['price'] = price
+        order_params['timeInForce'] = "GTC"
+        order_params['closePosition'] = True  # 전량 매도
+
+        # quantity가 필수 파라미터가 아니므로, closePosition=True가 있다면 quantity를 추가하지 않음.
+        if 'closePosition' not in order_params or not order_params[
+            'closePosition']:  # closePosition이 없거나 False일 때만 quantity 추가
+            order_params['quantity'] = adjusted_volume
+
+        response = _place_order(**order_params)
     else:
         raise ValueError(f"지원하지 않는 주문 유형입니다: {type}")
-
-    # Upbit의 UUID와 유사하게 'orderId'를 'uuid'로 매핑하여 반환
-    return {"uuid": response.get("orderId"), "response": response}
 
 
 def cancel_order(order_uuid: str, market: str) -> dict:

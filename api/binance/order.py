@@ -120,6 +120,7 @@ def send_order(market: str, side: str, type: str,
 
     else:
         raise ValueError(f"지원하지 않는 주문 유형입니다: {type}")
+    return response
 
 
 def cancel_order(order_uuid: str, market: str) -> dict:

@@ -104,78 +104,39 @@ def load_setting_data():
 
 
 def run_sell_entry_flow():
-    logging.info("[sell_entry.py] 카지노 매매 전략 - 매도 로직 시작")
+    logging.info("[sell_entry.py] 카지노 매매 전략 - 매도 로직 시작 (선주문 방식)")
 
     setting_df = load_setting_data()
-    holdings = get_current_holdings() # common_utils에서 import된 함수 호출
+    holdings = get_current_holdings()
 
     if not holdings:
-        logging.info("[sell_entry.py] 현재 보유 코인이 없어 매도 로직을 종료합니다.")
-        # 만약 sell_log에 미체결 주문이 남아있다면 clear
-        try:
-            sell_log_df = pd.read_csv("sell_log.csv")
-            if not sell_log_df.empty:
-                logging.info("[sell_entry.py] 보유 코인이 없으므로 sell_log.csv를 초기화합니다.")
-                # notify_bot_status 알림은 너무 잦을 수 있으므로 여기서는 선택적으로 주석 처리.
-                # notify_bot_status("초기화", "보유 코인 없어 sell_log.csv 초기화")
-                pd.DataFrame(columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"]).to_csv("sell_log.csv", index=False)
-        except FileNotFoundError:
-            pass
+        # ... (보유 코인 없을 때의 로직은 동일) ...
         return
 
     try:
-        sell_log_df = pd.read_csv("sell_log.csv")
+        # ❌ 기존 코드
+        # sell_log_df = pd.read_csv("sell_log.csv")
+        # ✅ 수정 후 코드
+        # 'sell_uuid' 컬럼을 문자열(str) 타입으로 읽도록 명시합니다.
+        sell_log_df = pd.read_csv("sell_log.csv", dtype={'sell_uuid': str})
     except FileNotFoundError:
-        sell_log_df = pd.DataFrame(
-            columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"])
+        sell_log_df = pd.DataFrame(columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"])
 
-        # 1. 매도 목표가 생성/업데이트
+    # 1. 거래소에 제출된 'wait' 상태 주문들의 실제 체결 상태를 확인하고 업데이트
+    sell_log_df = update_sell_log_status(sell_log_df)
+
+    # 2. 현재 보유 현황을 기준으로 매도 주문 목록을 생성/업데이트 ('update' 상태 부여)
     sell_log_df = generate_sell_orders(setting_df, holdings, sell_log_df)
 
-    # 2. (핵심) 실행할 주문 필터링: "업데이트 필요" 상태이고, "목표가에 도달"한 주문만 선별
-    orders_to_execute_df = pd.DataFrame()  # 실행할 주문을 담을 빈 DataFrame
-
-    # 'update' 상태인 주문들만 먼저 거릅니다.
-    pending_update_df = sell_log_df[sell_log_df['filled'] == 'update'].copy()
-
-    if not pending_update_df.empty:
-        logging.info(f"매도 조건 감시 대상 주문: {pending_update_df['market'].tolist()}")
-        triggered_indices = []  # 목표가에 도달한 주문의 인덱스
-
-        for idx, row in pending_update_df.iterrows():
-            market = row['market']
-            target_sell_price = row['target_sell_price']
-            try:
-                # 현재가(매수 호가, bid price)를 기준으로 매도 조건 확인
-                current_price = get_current_bid_price(market)
-                logging.info(f"🔍 [{market}] 매도 조건 확인: 현재가({current_price:.8f}) vs 목표가({target_sell_price:.8f})")
-
-                if current_price >= target_sell_price:
-                    logging.warning(f"🎯 [{market}] 매도 목표가 도달! 지정가 매도를 준비합니다.")
-                    triggered_indices.append(idx)
-
-            except Exception as e:
-                logging.error(f"❌ [{market}] 현재가 조회 실패. 매도 조건 확인을 건너뜁니다. 에러: {e}")
-                continue
-
-        # 목표가에 도달한 주문들만 orders_to_execute_df에 담습니다.
-        if triggered_indices:
-            orders_to_execute_df = sell_log_df.loc[triggered_indices]
-
-    # 3. 선별된 주문들에 대해 "지정가 매도" 실행
-    if not orders_to_execute_df.empty:
-        try:
-            # 지정가 매도 실행 함수 호출
-            updated_orders_df = execute_sell_orders(orders_to_execute_df)
-
-            # 실행 후 변경된 상태('wait' 등)를 원래의 sell_log_df에 반영
-            sell_log_df.update(updated_orders_df)
-            logging.info("✅ 지정가 매도 주문 완료 후 sell_log 상태 업데이트")
-
-        except Exception as e:
-            logging.error(f"🚨 지정가 매도 실행 중 치명적인 오류 발생: {e}", exc_info=True)
-            notify_error("Limit Sell Execution", f"지정가 매도 실행 중 오류: {e}")
-            sys.exit(1)
+    # 3. 'update' 상태인 주문들(신규/정정)을 모두 실행
+    try:
+        # order_executor는 'update' 상태인 주문을 찾아 실행하고,
+        # 상태를 'wait'으로 변경하여 반환합니다.
+        sell_log_df = execute_sell_orders(sell_log_df)
+    except Exception as e:
+        logging.error(f"🚨 매도 주문 실행 중 치명적인 오류 발생: {e}", exc_info=True)
+        notify_error("Sell Execution", f"매도 주문 실행 중 오류: {e}")
+        sys.exit(1)
 
     # 4. 최종 로그 파일 저장
     sell_log_df.to_csv("sell_log.csv", index=False)

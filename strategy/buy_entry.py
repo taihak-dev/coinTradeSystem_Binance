@@ -189,7 +189,7 @@ def run_buy_entry_flow():
     update_buy_log_status()
 
     try:
-        buy_log_df = pd.read_csv("buy_log.csv")
+        buy_log_df = pd.read_csv("buy_log.csv", dtype={'buy_uuid': str})
     except FileNotFoundError:
         buy_log_df = pd.DataFrame(columns=[
             "time", "market", "target_price", "buy_amount",

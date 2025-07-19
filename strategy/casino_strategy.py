@@ -2,7 +2,8 @@
 
 import pandas as pd
 from datetime import datetime
-import logging # 로깅 모듈 임포트
+import logging
+import numpy as np
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -214,13 +215,12 @@ def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: 
             existing_avg_buy_price = round(float(updated_df.at[existing_row_idx, 'avg_buy_price']), 8)
             existing_quantity = round(float(updated_df.at[existing_row_idx, 'quantity']), 8)
             existing_target_sell_price = round(float(updated_df.at[existing_row_idx, 'target_sell_price']), 8)
+            avg_price_is_close = np.isclose(existing_avg_buy_price, avg_buy_price, atol=1e-9)
+            quantity_is_close = np.isclose(existing_quantity, quantity_to_sell, atol=1e-9)
+            target_price_is_close = np.isclose(existing_target_sell_price, target_price, atol=1e-9)
 
-            # 현재 보유 정보와 기존 sell_log의 정보가 모두 동일한지 확인
-            is_same = (
-                existing_avg_buy_price == avg_buy_price and
-                existing_quantity == quantity_to_sell and
-                existing_target_sell_price == target_price
-            )
+            is_same = avg_price_is_close and quantity_is_close and target_price_is_close
+            # 💡💡💡 --- 여기까지 수정입니다 --- 💡💡💡
 
             if is_same:
                 logging.debug(f"✅ {market}: 보유 정보와 매도 주문 정보가 동일 → 기존 주문 유지.")
@@ -245,7 +245,7 @@ def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: 
                 "sell_uuid": "", # 주문 전이므로 UUID 없음
                 "filled": "update" # 새로 생성된 주문이므로 'update' 상태
             }
-            updated_df = pd.concat([updated_df, pd.DataFrame([new_row])], ignore_index=True)
+            updated_df.loc[len(updated_df)] = new_row
 
     logging.info("--- ⚙️ 매도 주문 생성 로직 완료 ---")
     return updated_df

@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def _place_order(symbol: str, side: str, positionSide: str, type: str,
                  quantity: float = None, quoteOrderQty: float = None, price: float = None,
-                 timeInForce: str = None) -> dict:
+                 timeInForce: str = None, closePosition: bool = None) -> dict:
     """
     바이낸스 선물 거래소에 주문을 제출하는 내부 함수.
 
@@ -28,27 +28,26 @@ def _place_order(symbol: str, side: str, positionSide: str, type: str,
     :param timeInForce: GTC, IOC, FOK 등 (지정가 주문 시 사용)
     :return: 주문 응답 딕셔너리
     """
-    client = get_binance_client()  # 인증된 클라이언트 가져오기
+    client = get_binance_client()
 
     params = {
         'symbol': symbol,
         'side': side,
-        'positionSide': positionSide,  # 헷지 모드에서 필수
+        'positionSide': positionSide,
         'type': type,
-        'newClientOrderId': f"A_{uuid.uuid4().hex}"  # 34자 길이로 수정 (A_ + 32자 UUID)
+        'newClientOrderId': f"A_{uuid.uuid4().hex}"
     }
 
-    # quantity와 quoteOrderQty는 동시에 보낼 수 없으므로,
-    # 둘 중 하나만 존재할 때 params에 추가
     if quantity is not None:
         params['quantity'] = quantity
-    if quoteOrderQty is not None:  # else if 대신 독립적인 if로 변경 (안전성 증대)
+    if quoteOrderQty is not None:
         params['quoteOrderQty'] = quoteOrderQty
-
     if price is not None:
         params['price'] = price
     if timeInForce is not None:
         params['timeInForce'] = timeInForce
+    if closePosition is not None:  # <-- closePosition이 있으면 params에 추가
+        params['closePosition'] = str(closePosition).lower()  # API는 'true'/'false' 문자열을 요구할 수 있음
 
     try:
         response = client.new_order(**params)
@@ -103,6 +102,7 @@ def send_order(market: str, side: str, type: str,
 
             response = _place_order(**order_params)
 
+
     elif binance_type == "LIMIT":
         if price is None or volume is None:
             raise ValueError("지정가 주문은 'price'와 'volume'을 필수로 지정해야 합니다.")
@@ -112,18 +112,12 @@ def send_order(market: str, side: str, type: str,
             logging.warning(f"⚠️ {market} 지정가 주문 수량 조정 결과 0이하. 주문 취소. (원본: {volume})")
             return {"error": "adjusted_quantity_zero"}
 
-        # ⭐⭐ 수정: closePosition=True일 때는 quantity를 보내지 않음 ⭐⭐
-        # order_params['quantity'] = adjusted_volume # 이 줄을 삭제하거나 조건부로 변경
+        order_params['quantity'] = adjusted_volume
         order_params['price'] = price
         order_params['timeInForce'] = "GTC"
-        order_params['closePosition'] = True  # 전량 매도
-
-        # quantity가 필수 파라미터가 아니므로, closePosition=True가 있다면 quantity를 추가하지 않음.
-        if 'closePosition' not in order_params or not order_params[
-            'closePosition']:  # closePosition이 없거나 False일 때만 quantity 추가
-            order_params['quantity'] = adjusted_volume
 
         response = _place_order(**order_params)
+
     else:
         raise ValueError(f"지원하지 않는 주문 유형입니다: {type}")
 

@@ -1,10 +1,11 @@
 # strategy/buy_entry.py
-
+import logging
 import pandas as pd
 import os
 import sys
 import config
 from utils.telegram_notifier import notify_order_event, notify_error
+from datetime import datetime
 # from api.binance.account import get_accounts # 제거
 # from api.binance.order import get_order_result, cancel_order # 기존
 # from api.binance.price import get_current_ask_price # 제거
@@ -79,7 +80,52 @@ def load_setting_data():
     return pd.read_csv("setting.csv")
 
 
-# --- 기존 get_current_holdings 함수는 utils/common_utils.py로 이동 ---
+def reconcile_holdings_with_logs(holdings: dict, buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    거래소의 실제 보유 현황과 로컬 로그 파일을 비교하여,
+    누락된 코인 정보를 buy_log.csv에 자동으로 추가하여 동기화합니다.
+    """
+    logging.info("⚙️ 실제 보유 현황과 로그 파일의 동기화를 시작합니다...")
+
+    coins_in_holdings = set(holdings.keys())
+    coins_in_buy_log = set(buy_log_df['market'].unique())
+    coins_in_settings = set(setting_df['market'].unique())
+
+    missing_coins = (coins_in_settings & coins_in_holdings) - coins_in_buy_log
+
+    if not missing_coins:
+        logging.info("✅ 모든 보유 코인이 로그 파일과 동기화되어 있습니다.")
+        return buy_log_df
+
+    logging.warning(f"⚠️ 로그 파일과 동기화되지 않은 코인을 발견했습니다: {missing_coins}")
+    new_buy_logs = []
+
+    for market in missing_coins:
+        logging.info(f"  -> '{market}' 코인의 매수 기록을 자동으로 생성합니다.")
+        holding_info = holdings[market]
+        avg_price = holding_info['avg_price']
+        balance = holding_info['balance']
+
+        new_buy_log_entry = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "market": market,
+            "target_price": avg_price,
+            "buy_amount": avg_price * balance,
+            "buy_units": 0,
+            "buy_type": "initial",
+            "buy_uuid": f"re-synced-{int(datetime.now().timestamp())}",
+            "filled": "done"
+        }
+        new_buy_logs.append(new_buy_log_entry)
+        logging.info(f"    - 생성된 매수 기록: {new_buy_log_entry}")
+
+    if new_buy_logs:
+        new_logs_df = pd.DataFrame(new_buy_logs)
+        updated_buy_log_df = pd.concat([buy_log_df, new_logs_df], ignore_index=True)
+        logging.info(f"✅ 총 {len(new_buy_logs)}개의 누락된 코인 정보를 buy_log_df에 추가했습니다.")
+        return updated_buy_log_df
+
+    return buy_log_df
 
 
 def update_buy_log_status():
@@ -150,6 +196,9 @@ def run_buy_entry_flow():
             "buy_units", "buy_type", "buy_uuid", "filled"
         ])
 
+    # 모든 로직 시작 전에, 실제 보유 현황을 기준으로 buy_log.csv를 먼저 동기화합니다.
+    buy_log_df = reconcile_holdings_with_logs(holdings, buy_log_df, setting_df)
+
     # 매도된 코인의 미체결 매수 주문 정리
     buy_log_df = clean_buy_log_for_fully_sold_coins(buy_log_df, holdings)
 
@@ -175,7 +224,7 @@ def run_buy_entry_flow():
         updated_buy_log_df.to_csv("buy_log.csv", index=False)
         print("[buy_entry.py] 모든 주문 완료 → buy_log.csv 저장 완료")
     except Exception as e:
-        print(f"🚨 주문 실행 중 치명적인 오류 발생: {e}", file=sys.stderr) # 오류 메시지 명확화
+        print(f"🚨 주문 실행 중 치명적인 오류 발생: {e}") # 오류 메시지 명확화
         sys.exit(1)
 
     print("[buy_entry.py] 매수 전략 흐름 종료")

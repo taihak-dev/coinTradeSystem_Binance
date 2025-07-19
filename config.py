@@ -12,7 +12,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN") 
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")     # @get_id_bot 에서 받은 Chat ID
 
 # 기타 설정
-RUN_INTERVAL_SECONDS = int(os.getenv("RUN_INTERVAL_SECONDS", "5")) # 메인 루프 실행 주기 (초)
+RUN_INTERVAL_SECONDS = int(os.getenv("RUN_INTERVAL_SECONDS", "10")) # 메인 루프 실행 주기 (초)
 
 # 알림 주기 설정
 HEALTH_CHECK_INTERVAL_SECONDS = int(os.getenv("HEALTH_CHECK_INTERVAL_SECONDS", "3600")) # 봇 정상 동작 알림 주기 (1시간)

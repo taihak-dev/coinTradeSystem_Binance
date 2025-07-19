@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 if config.EXCHANGE == 'binance':
     logging.info("[SYSTEM] 바이낸스 모드로 매도 로직을 설정합니다.")
     from api.binance.order import get_order_result, cancel_order # cancel_order도 사용됨
+    from api.binance.price import get_current_bid_price
 else:
     logging.info("[SYSTEM] 업비트 모드로 매도 로직을 설정합니다.")
     from api.upbit.order import get_order_results_by_uuids
@@ -125,30 +126,57 @@ def run_sell_entry_flow():
     try:
         sell_log_df = pd.read_csv("sell_log.csv")
     except FileNotFoundError:
-        sell_log_df = pd.DataFrame(columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"])
+        sell_log_df = pd.DataFrame(
+            columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"])
 
-    # 매도 로그 상태 업데이트 (체결/취소 알림 발생)
-    sell_log_df = update_sell_log_status(sell_log_df)
+        # 1. 매도 목표가 생성/업데이트
+    sell_log_df = generate_sell_orders(setting_df, holdings, sell_log_df)
 
-    # 보유하지 않은 마켓의 sell_log는 정리
-    valid_markets = set(holdings.keys())
-    initial_sell_log_count = len(sell_log_df)
-    sell_log_df = sell_log_df[sell_log_df["market"].isin(valid_markets)].reset_index(drop=True)
-    if len(sell_log_df) < initial_sell_log_count:
-        logging.info(f"[sell_entry.py] 보유하지 않은 마켓의 매도 주문 {initial_sell_log_count - len(sell_log_df)}건 정리 완료.")
-        # notify_bot_status 알림 (옵션)
-        # notify_bot_status("정리", f"보유하지 않은 매도 주문 {initial_sell_log_count - len(sell_log_df)}건 정리 완료.")
+    # 2. (핵심) 실행할 주문 필터링: "업데이트 필요" 상태이고, "목표가에 도달"한 주문만 선별
+    orders_to_execute_df = pd.DataFrame()  # 실행할 주문을 담을 빈 DataFrame
 
+    # 'update' 상태인 주문들만 먼저 거릅니다.
+    pending_update_df = sell_log_df[sell_log_df['filled'] == 'update'].copy()
 
-    updated_sell_log_df = generate_sell_orders(setting_df, holdings, sell_log_df)
+    if not pending_update_df.empty:
+        logging.info(f"매도 조건 감시 대상 주문: {pending_update_df['market'].tolist()}")
+        triggered_indices = []  # 목표가에 도달한 주문의 인덱스
 
-    try:
-        updated_sell_log_df = execute_sell_orders(updated_sell_log_df)
-        updated_sell_log_df.to_csv("sell_log.csv", index=False)
-        logging.info("[sell_entry.py] 매도 주문 완료 → sell_log.csv 저장 완료")
-    except Exception as e:
-        logging.error(f"🚨 매도 주문 실행 중 치명적인 오류 발생: {e}", file=sys.stderr, exc_info=True)
-        notify_error("Sell Entry Flow", f"매도 주문 실행 중 치명적인 오류 발생: {e}") # 치명적 오류 알림
-        sys.exit(1)
+        for idx, row in pending_update_df.iterrows():
+            market = row['market']
+            target_sell_price = row['target_sell_price']
+            try:
+                # 현재가(매수 호가, bid price)를 기준으로 매도 조건 확인
+                current_price = get_current_bid_price(market)
+                logging.info(f"🔍 [{market}] 매도 조건 확인: 현재가({current_price:.8f}) vs 목표가({target_sell_price:.8f})")
 
-    logging.info("[sell_entry.py] 매도 전략 흐름 종료")
+                if current_price >= target_sell_price:
+                    logging.warning(f"🎯 [{market}] 매도 목표가 도달! 지정가 매도를 준비합니다.")
+                    triggered_indices.append(idx)
+
+            except Exception as e:
+                logging.error(f"❌ [{market}] 현재가 조회 실패. 매도 조건 확인을 건너뜁니다. 에러: {e}")
+                continue
+
+        # 목표가에 도달한 주문들만 orders_to_execute_df에 담습니다.
+        if triggered_indices:
+            orders_to_execute_df = sell_log_df.loc[triggered_indices]
+
+    # 3. 선별된 주문들에 대해 "지정가 매도" 실행
+    if not orders_to_execute_df.empty:
+        try:
+            # 지정가 매도 실행 함수 호출
+            updated_orders_df = execute_sell_orders(orders_to_execute_df)
+
+            # 실행 후 변경된 상태('wait' 등)를 원래의 sell_log_df에 반영
+            sell_log_df.update(updated_orders_df)
+            logging.info("✅ 지정가 매도 주문 완료 후 sell_log 상태 업데이트")
+
+        except Exception as e:
+            logging.error(f"🚨 지정가 매도 실행 중 치명적인 오류 발생: {e}", exc_info=True)
+            notify_error("Limit Sell Execution", f"지정가 매도 실행 중 오류: {e}")
+            sys.exit(1)
+
+    # 4. 최종 로그 파일 저장
+    sell_log_df.to_csv("sell_log.csv", index=False)
+    logging.info("[sell_entry.py] 매도 전략 흐름 종료 → sell_log.csv 저장 완료")

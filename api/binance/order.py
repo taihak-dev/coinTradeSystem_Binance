@@ -54,21 +54,40 @@ def send_order(market: str, side: str, type: str,
 
 
 def get_order_result(order_uuid: str, market: str) -> dict:
+    """
+    바이낸스에서 특정 주문의 상세 정보를 조회합니다.
+    단순 상태 조회뿐만 아니라, 체결 관련 상세 정보를 포함하여 반환합니다.
+    """
     client = get_binance_client()
     try:
         response = client.query_order(symbol=market, orderId=str(order_uuid))
+
         state_map = {
             "NEW": "wait", "PARTIALLY_FILLED": "wait", "FILLED": "done",
             "CANCELED": "cancel", "PENDING_CANCEL": "wait",
             "REJECTED": "error", "EXPIRED": "cancel",
         }
+
+        # ✅ 반환할 정보에 체결 수량, 평균 체결가, 수수료 등을 추가합니다.
         return {
             "uuid": response.get("orderId"),
-            "state": state_map.get(response.get("status"), "unknown")
+            "state": state_map.get(response.get("status"), "unknown"),
+            "market": response.get("symbol"),
+            "order_type": response.get("type"),
+            "side": response.get("side"),
+            "price": float(response.get("price", 0.0)),  # 주문 가격
+            "avg_price": float(response.get("avgPrice", 0.0)),  # 평균 체결 가격
+            "executed_qty": float(response.get("executedQty", 0.0)),  # 체결된 수량
+            "cum_quote": float(response.get("cumQuote", 0.0)),  # 체결된 총 금액 (USDT)
+            # 수수료 정보는 별도 trade list 조회가 필요할 수 있으나, 우선은 생략.
+            # 필요 시 client.get_account_trades(symbol=market)를 통해 조회 가능
         }
     except ClientError as e:
         if e.error_code == -2013:
+            # 주문이 존재하지 않는 경우 (이미 오래전에 체결되고 정리됨)
+            logging.warning(f"ⓘ 주문 상태 조회: {market}(id:{order_uuid}) - 주문이 존재하지 않음. 'done'으로 간주.")
             return {"uuid": order_uuid, "state": "done"}
+        logging.error(f"❌ 주문 상태 조회 실패 {market}(id:{order_uuid}): {e}", exc_info=True)
         raise e
 
 

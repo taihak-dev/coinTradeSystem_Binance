@@ -77,6 +77,10 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 buy_log_df.at[idx, "buy_uuid"] = new_order_uuid
                 buy_log_df.at[idx, "filled"] = "wait"
                 logging.info(f"✅ [{market}] 매수 주문 제출 완료. 새 UUID: {new_order_uuid}, 상태: 'wait'")
+                notify_order_event(
+                    "제출", market,
+                    {"type": buy_type, "price": price, "quantity": volume_to_order, "leverage": settings['leverage']}
+                )
             else:
                 if isinstance(response, dict) and response.get("error"):
                     logging.warning(f"⚠️ [{market}] 주문이 제출되지 않았습니다: {response.get('error')}")
@@ -131,6 +135,10 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                 sell_log_df.at[idx, "sell_uuid"] = new_order_uuid
                 sell_log_df.at[idx, "filled"] = "wait"
                 logging.info(f"✅ [{market}] 매도 주문 제출 완료. 새 UUID: {new_order_uuid}, 상태: 'wait'")
+                notify_order_event(
+                    "제출", market,
+                    {"type": "limit_sell", "price": price, "quantity": volume_to_order, "leverage": "-"}
+                )
             else:
                 raise ValueError(f"매도 주문 후 UUID를 얻지 못했습니다. 응답: {response}")
         except Exception as e:

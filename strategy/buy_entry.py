@@ -157,6 +157,16 @@ def update_buy_log_status():
                     df.at[idx, "filled"] = result['state']
                     print(f"주문 상태 변경: {market} (id:{uuid}) -> {result['state']}")
                     changed = True
+                    logging.info(f"🎉 [{market}] 매수 주문 체결! 텔레그램 알림을 전송합니다.")
+                    notify_order_event(
+                        "체결", market,
+                        {
+                            "filled_qty": result.get('executed_qty'),
+                            "price": result.get('avg_price'),
+                            "total_amount": result.get('cum_quote'),
+                            "fee": 0  # 수수료 정보는 별도 조회가 필요하여 우선 0으로 표시
+                        }
+                    )
             except Exception as e:
                 print(f"주문 상태 조회 실패 {market}(id:{uuid}): {e}")
     else: # 업비트

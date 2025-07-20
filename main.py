@@ -7,7 +7,7 @@ import os
 import sys
 import config
 from datetime import datetime
-from dotenv import load_dotenv  #
+from dotenv import load_dotenv
 
 # .env 파일 로드 (가장 먼저 실행되는 코드 중 하나여야 함)
 load_dotenv()  #

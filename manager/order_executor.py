@@ -30,7 +30,9 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
         buy_amount_usdt = float(row["buy_amount"])
 
         try:
+            # 1. 거래 환경 설정 (레버리지, 마진 타입)
             if config.EXCHANGE == 'binance' and market not in _configured_symbols:
+                # ... (이 부분은 기존 코드와 동일합니다) ...
                 logging.info(f"⚙️ [{market}] 거래 환경 설정 시작")
                 settings = setting_df[setting_df['market'] == market].iloc[0]
                 leverage = int(settings['leverage'])
@@ -49,38 +51,44 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 _configured_symbols.add(market)
                 logging.info(f"⚙️ [{market}] 거래 환경 설정 완료.")
 
-            # ✅✅✅ 최종 수정: 모든 주문에 대해 quantity를 계산합니다 ✅✅✅
+            # ✅✅✅ 핵심 수정 부분 ✅✅✅
+            # 2. API 전송 전, 가격과 수량을 거래소 규칙에 맞게 보정합니다.
             volume_to_order = buy_amount_usdt / price if price > 0 else 0
 
+            # 가격(price)과 수량(volume)을 거래소 호가 단위에 맞게 조정
+            adjusted_price = adjust_price_to_tick(market, price)
+            adjusted_volume = adjust_quantity_to_step(market, volume_to_order)
+
+            # 보정 후 수량이 0 이하면 주문을 실행하지 않습니다.
+            if adjusted_volume <= 0:
+                logging.warning(f"⚠️ [{market}] 주문 수량 보정 결과 0 이하. 주문 취소. (원본: {volume_to_order})")
+                continue  # 다음 주문으로 넘어감
+
+            # 3. buy_type에 따라 주문을 전송합니다.
             if buy_type == 'initial':
-                # 'initial' 주문은 시장가(market)로, 계산된 수량(volume)을 전달합니다.
                 response = send_order(
                     market=market,
                     side="bid",
                     type="market",
-                    volume=volume_to_order,
+                    volume=adjusted_volume,  # 보정된 수량 사용
                     position_side="LONG"
                 )
             else:  # 'small_flow', 'large_flow' 등
-                # 그 외 주문은 지정가(limit)로, 수량(volume)과 가격(price)을 전달합니다.
                 response = send_order(
                     market=market,
                     side="bid",
                     type="limit",
-                    price=price,
-                    volume=volume_to_order,
+                    price=adjusted_price,  # 보정된 가격 사용
+                    volume=adjusted_volume,  # 보정된 수량 사용
                     position_side="LONG"
                 )
 
+            # 4. 주문 제출 결과 반영
             new_order_uuid = response.get("orderId", "")
             if new_order_uuid:
                 buy_log_df.at[idx, "buy_uuid"] = new_order_uuid
                 buy_log_df.at[idx, "filled"] = "wait"
                 logging.info(f"✅ [{market}] 매수 주문 제출 완료. 새 UUID: {new_order_uuid}, 상태: 'wait'")
-                notify_order_event(
-                    "제출", market,
-                    {"type": buy_type, "price": price, "quantity": volume_to_order, "leverage": settings['leverage']}
-                )
             else:
                 if isinstance(response, dict) and response.get("error"):
                     logging.warning(f"⚠️ [{market}] 주문이 제출되지 않았습니다: {response.get('error')}")

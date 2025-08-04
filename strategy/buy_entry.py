@@ -227,14 +227,33 @@ def run_buy_entry_flow():
         except Exception as e:
             print(f"❌ {market} 현재가 조회 실패: {e}")
 
-    updated_buy_log_df = generate_buy_orders(setting_df, buy_log_df, current_prices)
+    # 1. 현재 가격을 기준으로 신규 매수 주문 목록을 생성합니다.
+    new_orders_df = generate_buy_orders(setting_df, buy_log_df, current_prices, holdings)
 
-    try:
-        updated_buy_log_df = execute_buy_orders(updated_buy_log_df, setting_df)
-        updated_buy_log_df.to_csv("buy_log.csv", index=False)
-        print("[buy_entry.py] 모든 주문 완료 → buy_log.csv 저장 완료")
-    except Exception as e:
-        print(f"🚨 주문 실행 중 치명적인 오류 발생: {e}") # 오류 메시지 명확화
-        sys.exit(1)
+    # 2. 신규 생성된 주문이 있을 경우에만 실행 로직을 진행합니다.
+    if not new_orders_df.empty:
+        print(f"[buy_entry.py] 신규 매수 주문 {len(new_orders_df)}건 생성됨. 주문 실행을 시작합니다.")
+
+        # 💡 [핵심 수정 1] 기존 로그와 신규 주문을 하나로 합칩니다.
+        combined_buy_log_df = pd.concat([buy_log_df, new_orders_df], ignore_index=True)
+
+        try:
+            # 💡 [핵심 수정 2] 합쳐진 전체 로그를 실행기에 전달합니다.
+            final_buy_log_df = execute_buy_orders(combined_buy_log_df, setting_df)
+
+            # 💡 [핵심 수정 3] 최종 업데이트된 전체 로그를 저장하여 데이터 유실을 방지합니다.
+            final_buy_log_df.to_csv("buy_log.csv", index=False)
+            print("[buy_entry.py] 모든 주문 완료 → buy_log.csv 저장 완료")
+
+        except Exception as e:
+            print(f"🚨 주문 실행 중 치명적인 오류 발생: {e}")
+            # 오류 발생 시에도 현재까지의 로그는 유지됩니다.
+            sys.exit(1)
+
+    else:
+        # 💡 [핵심 수정 4] 신규 주문이 없으면 없다고 명확히 로그를 남기고 종료합니다.
+        print("[buy_entry.py] 신규 매수 주문이 없습니다. 현재 상태를 유지합니다.")
+        # 만약을 위해 현재 상태의 buy_log_df를 저장하여 일관성을 유지합니다.
+        buy_log_df.to_csv("buy_log.csv", index=False)
 
     print("[buy_entry.py] 매수 전략 흐름 종료")

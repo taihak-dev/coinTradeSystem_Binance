@@ -99,37 +99,60 @@ def run_sell_entry_flow():
     setting_df = load_setting_data()
     holdings = get_current_holdings()
 
-    if not holdings:
-        logging.info("[sell_entry.py] 현재 보유 코인이 없어 매도 로직을 종료합니다.")
-        try:
-            sell_log_df = pd.read_csv("sell_log.csv", dtype={'sell_uuid': str})
-            if not sell_log_df.empty:
-                sell_log_df.to_csv("sell_log.csv", index=False)
-                logging.info("보유 코인이 없으므로 sell_log.csv를 비웁니다.")
-        except FileNotFoundError:
-            pass  # 파일이 없으면 아무것도 하지 않음
-        return
-
     try:
         sell_log_df = pd.read_csv("sell_log.csv", dtype={'sell_uuid': str})
     except FileNotFoundError:
         sell_log_df = pd.DataFrame(
             columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"])
 
+    # --- 💡 [핵심 수정 1] 보유하지 않는 코인의 매도 기록을 먼저 정리 ---
+    if not sell_log_df.empty:
+        markets_in_log = sell_log_df['market'].unique()
+        markets_in_holdings = holdings.keys()
+        markets_to_remove = [m for m in markets_in_log if m not in markets_in_holdings]
+
+        if markets_to_remove:
+            logging.info(f"🧹 보유하지 않는 코인의 매도 기록을 sell_log.csv에서 정리합니다: {markets_to_remove}")
+            sell_log_df = sell_log_df[~sell_log_df['market'].isin(markets_to_remove)].copy()
+    # --- 여기까지 정리 로직 ---
+
+    # 현재 보유 코인이 없다면 모든 로직 종료
+    if not holdings:
+        logging.info("[sell_entry.py] 현재 보유 코인이 없어 매도 로직을 종료합니다.")
+        # 정리된 sell_log_df (비어있을 것)를 저장
+        sell_log_df.to_csv("sell_log.csv", index=False)
+        return
+
     # 1. 거래소에 제출된 'wait' 상태 주문들의 실제 체결 상태를 확인하고 알림을 보냅니다.
     sell_log_df = update_sell_log_status(sell_log_df)
 
-    # 2. 현재 보유 현황을 기준으로 매도 주문 목록을 생성/업데이트 ('update' 상태 부여)
-    sell_log_df = generate_sell_orders(setting_df, holdings, sell_log_df)
+    # --- 💡 [핵심 수정 2] 매수 로직과 동일한 안정적인 데이터 처리 구조로 변경 ---
+    # 2. 현재 보유 현황을 기준으로 신규/정정 매도 주문 목록을 생성합니다.
+    orders_to_action_df = generate_sell_orders(setting_df, holdings, sell_log_df)
 
-    # 3. 'update' 상태인 주문들(신규/정정)을 모두 실행
-    try:
-        sell_log_df = execute_sell_orders(sell_log_df)
-    except Exception as e:
-        logging.error(f"🚨 매도 주문 실행 중 치명적인 오류 발생: {e}", exc_info=True)
-        notify_error("Sell Execution", f"매도 주문 실행 중 오류: {e}")
-        sys.exit(1)
+    # 3. 신규/정정 주문이 있을 경우에만 실행 로직을 진행합니다.
+    if not orders_to_action_df.empty:
+        logging.info(f"🆕 신규/정정 매도 주문 {len(orders_to_action_df)}건 생성됨. 주문 실행을 시작합니다.")
 
-    # 4. 최종 로그 파일 저장
-    sell_log_df.to_csv("sell_log.csv", index=False)
-    logging.info("[sell_entry.py] 매도 전략 흐름 종료 → sell_log.csv 저장 완료")
+        # 기존 로그에서 'update'가 필요한 주문들을 제거하고, 새로 생성된 주문 목록과 합칩니다.
+        # 'new' UUID를 가진 신규 주문과, 기존 UUID를 가진 정정 주문을 모두 처리합니다.
+        uuids_to_update = orders_to_action_df['sell_uuid'].tolist()
+        sell_log_df = sell_log_df[~sell_log_df['sell_uuid'].isin(uuids_to_update)]
+        combined_sell_log_df = pd.concat([sell_log_df, orders_to_action_df], ignore_index=True)
+
+        try:
+            # 합쳐진 전체 로그를 실행기에 전달합니다.
+            final_sell_log_df = execute_sell_orders(combined_sell_log_df)
+            # 최종 업데이트된 전체 로그를 저장하여 데이터 유실을 방지합니다.
+            final_sell_log_df.to_csv("sell_log.csv", index=False)
+            logging.info("[sell_entry.py] 모든 주문 완료 → sell_log.csv 저장 완료")
+        except Exception as e:
+            logging.error(f"🚨 매도 주문 실행 중 치명적인 오류 발생: {e}", exc_info=True)
+            notify_error("Sell Execution", f"매도 주문 실행 중 오류: {e}")
+            sys.exit(1)
+    else:
+        logging.info("[sell_entry.py] 신규/정정 매도 주문이 없습니다. 현재 상태를 유지합니다.")
+        # 변경사항(체결 상태 업데이트 등)이 있을 수 있으므로 현재 로그를 저장합니다.
+        sell_log_df.to_csv("sell_log.csv", index=False)
+
+    logging.info("[sell_entry.py] 매도 전략 흐름 종료")

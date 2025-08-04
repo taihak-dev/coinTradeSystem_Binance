@@ -3,10 +3,10 @@
 from manager.simulator_db import simulate_with_db
 
 simulate_with_db(
-    market="VIRTUALUSDT",
-    start="2025-03-01 00:00:00",
-    end="2025-06-31 23:59:59",
-    unit_size=20,
+    market="DOGEUSDT",
+    start="2025-07-22 00:55:00",
+    end="2025-08-02 23:59:59",
+    unit_size=400,
     small_flow_pct=0.04,
     small_flow_units=2,
     large_flow_pct=0.13,

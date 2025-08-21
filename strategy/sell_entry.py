@@ -138,7 +138,10 @@ def run_sell_entry_flow():
         # 'new' UUID를 가진 신규 주문과, 기존 UUID를 가진 정정 주문을 모두 처리합니다.
         uuids_to_update = orders_to_action_df['sell_uuid'].tolist()
         sell_log_df = sell_log_df[~sell_log_df['sell_uuid'].isin(uuids_to_update)]
-        combined_sell_log_df = pd.concat([sell_log_df, orders_to_action_df], ignore_index=True)
+        if sell_log_df.empty:
+            combined_sell_log_df = orders_to_action_df
+        else:
+            combined_sell_log_df = pd.concat([sell_log_df, orders_to_action_df], ignore_index=True)
 
         try:
             # 합쳐진 전체 로그를 실행기에 전달합니다.

@@ -32,7 +32,6 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
         try:
             # 1. 거래 환경 설정 (레버리지, 마진 타입)
             if config.EXCHANGE == 'binance' and market not in _configured_symbols:
-                # ... (이 부분은 기존 코드와 동일합니다) ...
                 logging.info(f"⚙️ [{market}] 거래 환경 설정 시작")
                 settings = setting_df[setting_df['market'] == market].iloc[0]
                 leverage = int(settings['leverage'])
@@ -51,7 +50,6 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 _configured_symbols.add(market)
                 logging.info(f"⚙️ [{market}] 거래 환경 설정 완료.")
 
-            # ✅✅✅ 핵심 수정 부분 ✅✅✅
             # 2. API 전송 전, 가격과 수량을 거래소 규칙에 맞게 보정합니다.
             volume_to_order = buy_amount_usdt / price if price > 0 else 0
 
@@ -62,7 +60,7 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
             # 보정 후 수량이 0 이하면 주문을 실행하지 않습니다.
             if adjusted_volume <= 0:
                 logging.warning(f"⚠️ [{market}] 주문 수량 보정 결과 0 이하. 주문 취소. (원본: {volume_to_order})")
-                continue  # 다음 주문으로 넘어감
+                continue
 
             # 3. buy_type에 따라 주문을 전송합니다.
             if buy_type == 'initial':
@@ -70,16 +68,16 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                     market=market,
                     side="bid",
                     type="market",
-                    volume=adjusted_volume,  # 보정된 수량 사용
+                    volume=adjusted_volume,
                     position_side="LONG"
                 )
-            else:  # 'small_flow', 'large_flow' 등
+            else:
                 response = send_order(
                     market=market,
                     side="bid",
                     type="limit",
-                    price=adjusted_price,  # 보정된 가격 사용
-                    volume=adjusted_volume,  # 보정된 수량 사용
+                    price=adjusted_price,
+                    volume=adjusted_volume,
                     position_side="LONG"
                 )
 
@@ -113,18 +111,25 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
     if orders_to_process.empty:
         logging.info("실행할 신규/정정 매도 주문이 없습니다.")
         return sell_log_df
+
+    logging.info(f"실행할 신규/정정 매도 주문이 {len(orders_to_process)}개 있습니다.")
+
     for idx, row in orders_to_process.iterrows():
         market = row["market"]
         price = float(row["target_sell_price"])
         volume_to_order = float(row["quantity"])
+
         if config.EXCHANGE == 'binance':
             price = adjust_price_to_tick(market, price)
             volume_to_order = adjust_quantity_to_step(market, volume_to_order)
+
         if volume_to_order <= 0:
             logging.warning(f"⚠️ [{market}] 매도할 수량이 0 이하이므로 주문을 건너뜁니다.")
             sell_log_df.at[idx, "filled"] = "done"
             continue
+
         try:
+            # 1. 기존 미체결 주문 취소
             try:
                 client = get_binance_client()
                 client.cancel_open_orders(symbol=market)
@@ -135,9 +140,19 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                     logging.info(f"ⓘ [{market}] 취소할 미체결 주문이 없습니다.")
                 else:
                     raise e
+
+            # 2. 신규/정정 매도 주문 제출
             logging.info(f"🆕 [{market}] 신규/정정 매도 주문 시도 (가격: {price}, 수량: {volume_to_order})")
-            response = send_order(market=market, side="ask", type="limit", price=price, volume=volume_to_order,
-                                  position_side="LONG")
+            response = send_order(
+                market=market,
+                side="ask",
+                type="limit",
+                price=price,
+                volume=volume_to_order,
+                position_side="LONG"
+            )
+
+            # 3. 주문 제출 결과 반영
             new_order_uuid = response.get("orderId", "")
             if new_order_uuid:
                 sell_log_df.at[idx, "sell_uuid"] = new_order_uuid
@@ -149,11 +164,22 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                 )
             else:
                 raise ValueError(f"매도 주문 후 UUID를 얻지 못했습니다. 응답: {response}")
+
+        except ClientError as e:
+            if e.error_code == -2022:
+                logging.warning(f"⚠️ [{market}] 매도 주문이 거절되었습니다(코드: -2022). 이미 포지션이 종료된 것으로 보입니다. 상태를 'done'으로 처리합니다.")
+                sell_log_df.at[idx, "filled"] = "done"
+            else:
+                logging.error(f"❌ [{market}] 매도 주문 실패 (ClientError): {e}", exc_info=True)
+                all_success = False
+                continue
+
         except Exception as e:
-            logging.error(f"❌ [{market}] 매도 주문 실패: {e}", exc_info=True)
+            logging.error(f"❌ [{market}] 매도 주문 실패 (알 수 없는 오류): {e}", exc_info=True)
             all_success = False
             continue
+
     logging.info("--- 💲 지정가 매도 주문 실행 완료 ---")
     if not all_success:
-        raise RuntimeError("일부 매도 주문 실행에 실패했습니다.")
+        logging.error("일부 매도 주문 실행에 실패했습니다. 상세 내용은 위 로그를 확인하세요.")
     return sell_log_df

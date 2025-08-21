@@ -194,7 +194,33 @@ def run_buy_entry_flow():
     print("[buy_entry.py] 카지노 매매 전략 - 매수 로직 시작")
 
     setting_df = load_setting_data()
-    holdings = get_current_holdings() # common_utils에서 import된 함수 호출
+
+    # ✅✅✅ --- 1단계 안전장치: 자산 조회 실패 시 긴급 정지 --- ✅✅✅
+    try:
+        holdings = get_current_holdings()
+        # get_current_holdings 함수가 실패하면 Exception을 발생시킨다고 가정
+    except Exception as e:
+        logging.critical(f"🚨 [CRITICAL] 보유 자산 조회 실패: {e}. 안전을 위해 매수 로직을 즉시 중단합니다.")
+        notify_error("CRITICAL HOLDINGS CHECK", f"Failed to fetch holdings: {e}. Buy cycle aborted.")
+        return  # 함수를 즉시 종료하여 의도치 않은 매매 방지
+    # ✅✅✅ --- 여기까지 추가 --- ✅✅✅
+
+    try:
+        buy_log_df = pd.read_csv("buy_log.csv", dtype={'buy_uuid': str})
+    except FileNotFoundError:
+        buy_log_df = pd.DataFrame(columns=[
+            "time", "market", "target_price", "buy_amount",
+            "buy_units", "buy_type", "buy_uuid", "filled"
+        ])
+
+    # ✅✅✅ --- 2단계 안전장치: 로그와 실제 자산 동기화 --- ✅✅✅
+    # 매매 로직 시작 전, 항상 실제 보유 현황을 기준으로 buy_log.csv를 먼저 동기화합니다.
+    # 이 로직이 먼저 실행되면, 로그가 비워져도 자산 조회만 성공하면 복구 가능합니다.
+    buy_log_df = reconcile_holdings_with_logs(holdings, buy_log_df, setting_df)
+    # ✅✅✅ --- 여기까지 위치 조정 및 강조 --- ✅✅✅
+
+    # 매도된 코인의 미체결 매수 주문 정리
+    buy_log_df = clean_buy_log_for_fully_sold_coins(buy_log_df, holdings)
 
     update_buy_log_status()
 

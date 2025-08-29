@@ -90,4 +90,3 @@ def get_current_holdings(retries=3, delay=5) -> dict:
                 logging.error("모든 재시도 후에도 보유 자산 조회에 최종 실패했습니다.")
                 raise e  # 모든 재시도 실패 시, 오류를 발생시켜 봇을 멈춤
     raise RuntimeError("get_current_holdings 함수가 재시도 로직을 비정상적으로 빠져나왔습니다.")
-

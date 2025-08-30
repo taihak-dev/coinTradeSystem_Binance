@@ -6,9 +6,9 @@ import config
 import logging
 from binance.error import ClientError
 from api.binance.client import get_binance_client
-from services.exchange_service import send_order
 from utils.telegram_notifier import notify_order_event, notify_error
 from utils.binance_price_utils import adjust_price_to_tick, adjust_quantity_to_step
+from services.exchange_service import send_order, cancel_open_orders
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -131,8 +131,7 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
         try:
             # 1. 기존 미체결 주문 취소
             try:
-                client = get_binance_client()
-                client.cancel_open_orders(symbol=market)
+                cancel_open_orders(market)
                 logging.info(f"🧹 [{market}] 모든 미체결 주문을 취소했습니다. (새 주문 준비)")
                 time.sleep(0.2)
             except ClientError as e:

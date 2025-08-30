@@ -234,17 +234,20 @@ def run_buy_entry_flow():
     print("[buy_entry.py] 현재 가격 수집 중...")
     current_prices = {}
     # settings_df에 있는 모든 market에 대한 현재 가격을 조회
+    if config.EXCHANGE == 'binance':
+        from services.exchange_service import get_current_ask_price as _get_price
+    else:
+        from api.upbit.price import get_current_ask_price as _get_price
     for market in setting_df["market"].unique():
         try:
-            # common_utils에서 get_current_ask_price를 import하지 않았으므로
-            # api.binance.price.get_current_ask_price (또는 upbit)를 직접 호출
-            if config.EXCHANGE == 'binance':
-                from api.binance.price import get_current_ask_price
-            else:
-                from api.upbit.price import get_current_ask_price
-            current_prices[market] = get_current_ask_price(market)
+            current_prices[market] = _get_price(market)
         except Exception as e:
+            # 실패한 심볼만 스킵하고 다음으로 진행
             print(f"❌ {market} 현재가 조회 실패: {e}")
+            # 필요하면 기본값을 넣고 계속
+            # current_prices[market] = None
+            continue
+
 
     # 1. 현재 가격을 기준으로 신규 매수 주문 목록을 생성합니다.
     new_orders_df = generate_buy_orders(setting_df, buy_log_df, current_prices, holdings)

@@ -12,7 +12,7 @@ from utils.telegram_notifier import notify_order_event, notify_error
 # config 설정에 따라 다른 모듈을 불러오도록 변경
 if config.EXCHANGE == 'binance':
     logging.info("[SYSTEM] 바이낸스 모드로 매도 로직을 설정합니다.")
-    from api.binance.order import get_order_result
+    from services.exchange_service import get_order_result
 else:
     # 업비트 등 다른 거래소 로직 (현재는 비활성)
     pass

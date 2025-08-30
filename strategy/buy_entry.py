@@ -1,22 +1,15 @@
 # strategy/buy_entry.py
 import logging
-import pandas as pd
-import os
 import sys
+from datetime import datetime
+import pandas as pd
 import config
 from utils.telegram_notifier import notify_order_event, notify_error
-from datetime import datetime
-# from api.binance.account import get_accounts # 제거
-# from api.binance.order import get_order_result, cancel_order # 기존
-# from api.binance.price import get_current_ask_price # 제거
-# from api.upbit.account import get_accounts # 제거
-# from api.upbit.order import get_order_results_by_uuids, cancel_orders_by_uuids # 기존
-# from api.upbit.price import get_current_ask_price # 제거
 
 # config 설정에 따라 다른 모듈을 불러오도록 변경
 if config.EXCHANGE == 'binance':
     print("[SYSTEM] 바이낸스 모드로 매수 로직을 설정합니다.")
-    from api.binance.order import get_order_result, cancel_order
+    from services.exchange_service import get_order_result, cancel_order
 else:
     print("[SYSTEM] 업비트 모드로 매수 로직을 설정합니다.")
     from api.upbit.order import get_order_results_by_uuids, cancel_orders_by_uuids

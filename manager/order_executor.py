@@ -6,7 +6,7 @@ import config
 import logging
 from binance.error import ClientError
 from api.binance.client import get_binance_client
-from api.binance.order import send_order, cancel_order
+from services.exchange_service import send_order
 from utils.telegram_notifier import notify_order_event, notify_error
 from utils.binance_price_utils import adjust_price_to_tick, adjust_quantity_to_step
 

@@ -1,14 +1,13 @@
 # strategy/sell_entry.py
 
-import pandas as pd
-import sys
-import config
 import logging
-import numpy as np
-from utils.telegram_notifier import notify_order_event, notify_error
-from utils.common_utils import get_current_holdings
+import sys
+import pandas as pd
+import config
 from manager.order_executor import execute_sell_orders
 from strategy.casino_strategy import generate_sell_orders
+from utils.common_utils import get_current_holdings
+from utils.telegram_notifier import notify_order_event, notify_error
 
 # config 설정에 따라 다른 모듈을 불러오도록 변경
 if config.EXCHANGE == 'binance':

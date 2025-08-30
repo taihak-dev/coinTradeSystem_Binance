@@ -1,46 +1,59 @@
 # services/exchange_service.py
-from typing import Any, Dict, List, Optional
+"""
+거래소 라우팅 레이어.
+- 현재는 Binance만 실제 구현에 위임하고, Bybit는 NotImplemented로 막아 둠.
+- 이후 Bybit 구현을 추가해도 상위 로직 변경을 최소화하기 위한 얇은 추상화.
+"""
+import config
 
-# ---------- 계정/포지션 ----------
-def get_accounts() -> Dict[str, Any]:
-    raise NotImplementedError("phase1: interface only")
+# --- Binance 구현 위임 ---
+from api.binance.account import get_accounts as _bn_get_accounts  # :contentReference[oaicite:0]{index=0}
+from api.binance.order import (
+    send_order as _bn_send_order,         # :contentReference[oaicite:1]{index=1}
+    cancel_order as _bn_cancel_order,     # :contentReference[oaicite:2]{index=2}
+    get_order_result as _bn_get_order_result,  # :contentReference[oaicite:3]{index=3}
+)
+from api.binance.price import (
+    get_current_bid_price as _bn_get_bid,     # :contentReference[oaicite:4]{index=4}
+    get_current_ask_price as _bn_get_ask,     # :contentReference[oaicite:5]{index=5}
+    get_minute_candles as _bn_get_minutes,    # :contentReference[oaicite:6]{index=6}
+)
 
-def get_positions(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-    raise NotImplementedError("phase1: interface only")
+# --- 공통 라우팅 함수들 ---
 
-# ---------- 시세 ----------
-def get_current_price(symbol: str) -> Dict[str, float]:
-    raise NotImplementedError("phase1: interface only")
+def get_accounts():
+    if config.EXCHANGE == "binance":
+        return _bn_get_accounts()
+    raise NotImplementedError("get_accounts: Bybit 미구현")
 
-def get_minute_candles(symbol: str, to: Optional[str], count: int) -> List[Dict[str, Any]]:
-    raise NotImplementedError("phase1: interface only")
+def send_order(market: str, side: str, type: str, volume: float | None = None,
+               price: float | None = None, position_side: str = "BOTH",
+               closePosition: bool | None = None) -> dict:
+    if config.EXCHANGE == "binance":
+        return _bn_send_order(market, side, type, volume, price, position_side, closePosition)
+    raise NotImplementedError("send_order: Bybit 미구현")
 
-# ---------- 주문 ----------
-def ensure_trading_env(symbol: str, **kwargs) -> None:
-    raise NotImplementedError("phase1: interface only")
+def cancel_order(order_uuid: str, market: str) -> dict:
+    if config.EXCHANGE == "binance":
+        return _bn_cancel_order(order_uuid, market)
+    raise NotImplementedError("cancel_order: Bybit 미구현")
 
-def send_order(
-    symbol: str,
-    side: str,             # 'buy' | 'sell'
-    order_type: str,       # 'market' | 'limit'
-    qty: float,
-    price: Optional[float] = None,
-    reduce_only: bool = False,
-    time_in_force: str = "GTC",
-    client_id: Optional[str] = None,
-    close_position: bool = False,
-) -> Dict[str, Any]:
-    raise NotImplementedError("phase1: interface only")
+def get_order_result(order_uuid: str, market: str) -> dict:
+    if config.EXCHANGE == "binance":
+        return _bn_get_order_result(order_uuid, market)
+    raise NotImplementedError("get_order_result: Bybit 미구현")
 
-def cancel_open_orders(symbol: str) -> None:
-    raise NotImplementedError("phase1: interface only")
+def get_current_bid_price(symbol: str) -> float:
+    if config.EXCHANGE == "binance":
+        return _bn_get_bid(symbol)
+    raise NotImplementedError("get_current_bid_price: Bybit 미구현")
 
-def get_order_result(symbol: str, order_id: str) -> Dict[str, Any]:
-    raise NotImplementedError("phase1: interface only")
+def get_current_ask_price(symbol: str) -> float:
+    if config.EXCHANGE == "binance":
+        return _bn_get_ask(symbol)
+    raise NotImplementedError("get_current_ask_price: Bybit 미구현")
 
-# ---------- 정밀도/라운딩 ----------
-def adjust_price_to_tick(symbol: str, price: float) -> float:
-    raise NotImplementedError("phase1: interface only")
-
-def adjust_quantity_to_step(symbol: str, qty: float) -> float:
-    raise NotImplementedError("phase1: interface only")
+def get_minute_candles(symbol: str, unit: int = 1, to: str | None = None, count: int = 200):
+    if config.EXCHANGE == "binance":
+        return _bn_get_minutes(symbol, unit=unit, to=to, count=count)
+    raise NotImplementedError("get_minute_candles: Bybit 미구현")

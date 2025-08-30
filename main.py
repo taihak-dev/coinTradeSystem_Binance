@@ -1,19 +1,17 @@
 # main.py
 
 import logging
-import time
-import pandas as pd
 import os
 import sys
-import config
-from datetime import datetime
+import time
+import pandas as pd
 from dotenv import load_dotenv
+import config
 
 # .env 파일 로드 (가장 먼저 실행되는 코드 중 하나여야 함)
 load_dotenv()  #
 
 # common_utils 모듈 자체를 임포트
-import utils.common_utils
 
 # 바이낸스 모듈 (main.py에서 직접 사용되는 것만 남김)
 # get_order_result, cancel_order, get_current_ask_price, get_current_bid_price는
@@ -140,6 +138,7 @@ def main():
             usdt_balance = account_data.get("usdt_balance", 0.0)
 
             # ⭐⭐ 수정: "positions" 대신 "open_positions" 사용 ⭐⭐
+            open_positions_for_summary.clear()
             open_positions_raw = account_data.get("open_positions", [])  # account.py에서 반환되는 open_positions
 
             # 총 포트폴리오 가치 계산 (현금 + 포지션 가치)

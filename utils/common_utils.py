@@ -8,9 +8,9 @@ import time  # time 모듈 import 추가
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 if config.EXCHANGE == 'binance':
-    from api.binance.account import get_accounts as get_binance_accounts
-    from api.binance.price import get_current_ask_price
-
+    # Binance 직접 호출 대신 서비스 레이어를 경유
+    from services.exchange_service import get_accounts as get_binance_accounts
+    from services.exchange_service import get_current_ask_price
     logging.info("[SYSTEM] common_utils: 바이낸스 API 모드를 사용합니다.")
 
 

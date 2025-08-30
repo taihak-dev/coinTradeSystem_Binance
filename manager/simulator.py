@@ -13,7 +13,7 @@ from strategy.casino_strategy import generate_buy_orders, generate_sell_orders
 
 # config 설정에 따라 다른 API 모듈을 가져옴
 if config.EXCHANGE == 'binance':
-    from api.binance.price import get_minute_candles
+    from services.exchange_service import get_minute_candles
     logging.info("[SYSTEM] API 시뮬레이터: 바이낸스 모드로 실행합니다.")
 else:
     from api.upbit.price import get_minute_candles

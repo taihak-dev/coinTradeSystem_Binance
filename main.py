@@ -18,7 +18,7 @@ import utils.common_utils
 # 바이낸스 모듈 (main.py에서 직접 사용되는 것만 남김)
 # get_order_result, cancel_order, get_current_ask_price, get_current_bid_price는
 # main.py에서 직접 호출되지 않으므로 제거함.
-from api.binance.account import get_accounts as get_binance_accounts  # 계좌 정보 조회 (main에서 직접 사용)
+from services.exchange_service import get_accounts as get_binance_accounts  # 계좌 정보 조회 (main에서 직접 사용)
 
 # 매매 로직 (entry.py는 main에서 직접 호출)
 from strategy.entry import run_casino_entry

@@ -1,160 +1,217 @@
 # strategy/sell_entry.py
+# 매도 엔트리: 서비스 레이어를 경유해 주문 상태를 조회하고,
+#              상태 문자열 소문자 처리 및 체결 값 키 다양성/안전 캐스팅을 적용
 
-import logging
 import sys
+import logging
+import math
+from datetime import datetime
 import pandas as pd
+
 import config
+from utils.telegram_notifier import notify_order_event, notify_error
+from utils.common_utils import get_current_holdings
 from manager.order_executor import execute_sell_orders
 from strategy.casino_strategy import generate_sell_orders
-from utils.common_utils import get_current_holdings
-from utils.telegram_notifier import notify_order_event, notify_error
 
-# config 설정에 따라 다른 모듈을 불러오도록 변경
+# ──────────────────────────────────────────────────────────────────────────────
+# 거래소별 주문 상태 조회 함수 임포트 (바이낸스는 서비스 레이어 경유)
+# ──────────────────────────────────────────────────────────────────────────────
 if config.EXCHANGE == 'binance':
     logging.info("[SYSTEM] 바이낸스 모드로 매도 로직을 설정합니다.")
-    from services.exchange_service import get_order_result
+    from services.exchange_service import get_order_result  # (order_id, market)
+elif config.EXCHANGE == 'upbit':
+    logging.info("[SYSTEM] 업비트 모드로 매도 로직을 설정합니다.")
+    # 필요 시 업비트 주문 상태 조회를 연결
+    # from api.upbit.order import get_order_results_by_uuids as get_order_result
 else:
-    # 업비트 등 다른 거래소 로직 (현재는 비활성)
-    pass
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.warning(f"[SYSTEM] 알 수 없는 EXCHANGE 값: {config.EXCHANGE}. 기본값(바이낸스)로 취급합니다.")
+    from services.exchange_service import get_order_result
 
 
-def update_sell_log_status(sell_log_df: pd.DataFrame) -> pd.DataFrame:
+# ──────────────────────────────────────────────────────────────────────────────
+# 유틸
+# ──────────────────────────────────────────────────────────────────────────────
+def _load_csv(path: str, columns_if_new: list[str]) -> pd.DataFrame:
     """
-    sell_log.csv에 기록된 'wait' 상태의 주문들이 실제로 체결되었는지 확인하고 상태를 업데이트합니다.
-    체결이 확인되면 텔레그램으로 상세 알림을 전송합니다.
+    CSV를 안전하게 로드. 없으면 지정 컬럼으로 빈 DF 생성.
+    sell_uuid는 문자열로 다루기 위해 dtype 지정.
     """
-    logging.info("[sell_entry.py] sell_log.csv 주문 상태 확인 및 정리 중...")
-
-    # 확인할 주문이 없으면 바로 종료
-    if 'sell_uuid' not in sell_log_df.columns or sell_log_df['sell_uuid'].isnull().all():
-        logging.info("[sell_entry.py] 확인할 매도 주문이 없습니다.")
-        return sell_log_df
-
-    pending_df = sell_log_df[sell_log_df["filled"] == "wait"].copy()
-    if pending_df.empty:
-        logging.info("[sell_entry.py] 확인할 미체결 매도 주문이 없습니다.")
-        return sell_log_df
-
-    changed = False
-    for idx, row in pending_df.iterrows():
-        order_id = str(row["sell_uuid"])
-        market = row["market"]
-
-        try:
-            result = get_order_result(order_id, market)
-
-            # 💡 --- 알림 로직이 추가된 핵심 부분 --- 💡
-            # 주문 상태가 'wait' -> 'done' 으로 변경된 순간을 포착
-            if sell_log_df.at[idx, "filled"] == "wait" and result.get("state") == "done":
-                sell_log_df.at[idx, "filled"] = "done"
-                changed = True
-
-                logging.info(f"🎉 [{market}] 매도 주문 체결! 텔레그램 알림을 전송합니다.")
-
-                # 매도 수익(PNL) 계산
-                avg_buy_price = float(row['avg_buy_price'])
-                sell_price = result.get('avg_price')
-                sold_quantity = result.get('executed_qty')
-
-                # PNL = (판매가 - 구매가) * 수량
-                pnl = (sell_price - avg_buy_price) * sold_quantity if avg_buy_price > 0 else 0
-
-                # 텔레그램 알림 전송
-                notify_order_event(
-                    "체결", market,
-                    {
-                        "filled_qty": sold_quantity,
-                        "price": sell_price,
-                        "total_amount": result.get('cum_quote'),
-                        "fee": 0,  # 수수료 정보는 별도 조회가 필요하여 우선 0으로 표시
-                        "pnl": pnl  # 계산된 수익 정보 추가
-                    }
-                )
-            # 💡 --- 여기까지 알림 로직입니다 --- 💡
-
-        except Exception as e:
-            logging.error(f"❌ 매도 주문 상태 조회 실패 {market}(id:{order_id}): {e}")
-            notify_error(f"{market} Sell Order Status", f"주문 상태 조회 실패(id:{order_id}): {e}")
-            continue
-
-    if changed:
-        logging.info("[sell_entry.py] sell_log.csv에 변경사항 있음.")
-    else:
-        logging.info("[sell_entry.py] sell_log.csv에 변경사항 없음.")
-
-    return sell_log_df
-
-
-def load_setting_data():
-    logging.info("[sell_entry.py] setting.csv 불러오는 중")
-    return pd.read_csv("setting.csv")
-
-
-def run_sell_entry_flow():
-    logging.info("[sell_entry.py] 카지노 매매 전략 - 매도 로직 시작 (선주문 방식)")
-
-    setting_df = load_setting_data()
-    holdings = get_current_holdings()
-
     try:
-        sell_log_df = pd.read_csv("sell_log.csv", dtype={'sell_uuid': str})
+        return pd.read_csv(path, dtype={'sell_uuid': str})
     except FileNotFoundError:
-        sell_log_df = pd.DataFrame(
-            columns=["market", "avg_buy_price", "quantity", "target_sell_price", "sell_uuid", "filled"])
+        logging.info(f"[sell_entry] '{path}' 파일이 없어 새로 생성합니다.")
+        return pd.DataFrame(columns=columns_if_new)
+    except Exception as e:
+        logging.error(f"[sell_entry] '{path}' 로드 중 오류: {e}", exc_info=True)
+        raise
 
-    # --- 💡 [핵심 수정 1] 보유하지 않는 코인의 매도 기록을 먼저 정리 ---
-    if not sell_log_df.empty:
-        markets_in_log = sell_log_df['market'].unique()
-        markets_in_holdings = holdings.keys()
-        markets_to_remove = [m for m in markets_in_log if m not in markets_in_holdings]
 
-        if markets_to_remove:
-            logging.info(f"🧹 보유하지 않는 코인의 매도 기록을 sell_log.csv에서 정리합니다: {markets_to_remove}")
-            sell_log_df = sell_log_df[~sell_log_df['market'].isin(markets_to_remove)].copy()
-    # --- 여기까지 정리 로직 ---
+def _safe_float(value, default: float = 0.0) -> float:
+    """값을 float로 안전 캐스팅. None/빈문자/NaN/변환실패 시 default."""
+    try:
+        if value is None:
+            return float(default)
+        if isinstance(value, str) and value.strip() == "":
+            return float(default)
+        f = float(value)
+        if math.isnan(f):
+            return float(default)
+        return f
+    except Exception:
+        return float(default)
 
-    # 현재 보유 코인이 없다면 모든 로직 종료
-    if not holdings:
-        logging.info("[sell_entry.py] 현재 보유 코인이 없어 매도 로직을 종료합니다.")
-        # 정리된 sell_log_df (비어있을 것)를 저장
-        sell_log_df.to_csv("sell_log.csv", index=False)
-        return
 
-    # 1. 거래소에 제출된 'wait' 상태 주문들의 실제 체결 상태를 확인하고 알림을 보냅니다.
-    sell_log_df = update_sell_log_status(sell_log_df)
+# 체결 응답에서 필요한 값들을 안전하게 추출
+def _extract_done_fields(res: dict, avg_buy_price: float) -> tuple[float, float, float, float]:
+    """
+    가격/수량/누적 체결 금액을 안전 추출.
+    - 키 다양성 대응:
+      price:        avg_price | price
+      executed_qty: executed_qty | executedQty
+      cum_quote:    cum_quote | cummulativeQuoteQty
+    - PNL = (sell_price - avg_buy_price) * sold_quantity
+    """
+    sell_price = _safe_float(res.get('avg_price') or res.get('price') or 0.0, 0.0)
+    sold_quantity = _safe_float(res.get('executed_qty') or res.get('executedQty') or 0.0, 0.0)
+    total_amount = _safe_float(res.get('cum_quote') or res.get('cummulativeQuoteQty') or 0.0, 0.0)
+    pnl = (sell_price - avg_buy_price) * sold_quantity if avg_buy_price > 0 else 0.0
+    return sell_price, sold_quantity, total_amount, pnl
 
-    # --- 💡 [핵심 수정 2] 매수 로직과 동일한 안정적인 데이터 처리 구조로 변경 ---
-    # 2. 현재 보유 현황을 기준으로 신규/정정 매도 주문 목록을 생성합니다.
-    orders_to_action_df = generate_sell_orders(setting_df, holdings, sell_log_df)
 
-    # 3. 신규/정정 주문이 있을 경우에만 실행 로직을 진행합니다.
-    if not orders_to_action_df.empty:
-        logging.info(f"🆕 신규/정정 매도 주문 {len(orders_to_action_df)}건 생성됨. 주문 실행을 시작합니다.")
+# ──────────────────────────────────────────────────────────────────────────────
+# 메인 실행
+# ──────────────────────────────────────────────────────────────────────────────
+def run():
+    logging.info("[sell_entry] 매도 전략 시작")
 
-        # 기존 로그에서 'update'가 필요한 주문들을 제거하고, 새로 생성된 주문 목록과 합칩니다.
-        # 'new' UUID를 가진 신규 주문과, 기존 UUID를 가진 정정 주문을 모두 처리합니다.
-        uuids_to_update = orders_to_action_df['sell_uuid'].tolist()
-        sell_log_df = sell_log_df[~sell_log_df['sell_uuid'].isin(uuids_to_update)]
-        if sell_log_df.empty:
-            combined_sell_log_df = orders_to_action_df
-        else:
-            combined_sell_log_df = pd.concat([sell_log_df, orders_to_action_df], ignore_index=True)
+    # 1) 설정/보유 로드
+    setting_df = _load_csv("setting.csv", columns_if_new=["market", "weight", "enable"])
+    holdings = get_current_holdings()  # 현재 보유 수량/평단 등 (공통 util)
 
-        try:
-            # 합쳐진 전체 로그를 실행기에 전달합니다.
-            final_sell_log_df = execute_sell_orders(combined_sell_log_df)
-            # 최종 업데이트된 전체 로그를 저장하여 데이터 유실을 방지합니다.
-            final_sell_log_df.to_csv("sell_log.csv", index=False)
-            logging.info("[sell_entry.py] 모든 주문 완료 → sell_log.csv 저장 완료")
-        except Exception as e:
-            logging.error(f"🚨 매도 주문 실행 중 치명적인 오류 발생: {e}", exc_info=True)
-            notify_error("Sell Execution", f"매도 주문 실행 중 오류: {e}")
-            sys.exit(1)
+    # 2) 기존 매도 로그 로드 (없으면 스키마대로 생성)
+    sell_log_df = _load_csv(
+        "sell_log.csv",
+        columns_if_new=[
+            "market",
+            "avg_buy_price",
+            "quantity",
+            "target_sell_price",
+            "sell_uuid",
+            "filled",
+            "time",
+        ],
+    )
+
+    # 3) 전략으로부터 신규/정정 매도 주문 후보 생성
+    try:
+        candidate_sell_df = generate_sell_orders(setting_df, holdings)
+        if not isinstance(candidate_sell_df, pd.DataFrame):
+            raise ValueError("generate_sell_orders()는 DataFrame을 반환해야 합니다.")
+    except Exception as e:
+        logging.error(f"[sell_entry] 매도 후보 생성 실패: {e}", exc_info=True)
+        notify_error("Sell Strategy", f"매도 후보 생성 실패: {e}")
+        candidate_sell_df = pd.DataFrame(columns=sell_log_df.columns)
+
+    # 4) 기존 로그와 병합(정책에 맞게 조정 가능)
+    #    여기서는 sell_uuid 기준으로 최신 정보를 우선
+    if not sell_log_df.empty and "sell_uuid" in sell_log_df.columns:
+        merge_on = ["market", "sell_uuid"]
+        combined_sell_log_df = pd.concat([sell_log_df, candidate_sell_df], ignore_index=True)
+        combined_sell_log_df.drop_duplicates(subset=merge_on, keep="last", inplace=True)
     else:
-        logging.info("[sell_entry.py] 신규/정정 매도 주문이 없습니다. 현재 상태를 유지합니다.")
-        # 변경사항(체결 상태 업데이트 등)이 있을 수 있으므로 현재 로그를 저장합니다.
-        sell_log_df.to_csv("sell_log.csv", index=False)
+        combined_sell_log_df = candidate_sell_df.copy()
 
-    logging.info("[sell_entry.py] 매도 전략 흐름 종료")
+    # 5) 'wait' 상태 주문의 체결/취소 여부 갱신
+    if not combined_sell_log_df.empty:
+        # 결측 기본값 보정
+        for col, default in [("filled", ""), ("avg_buy_price", 0.0)]:
+            if col not in combined_sell_log_df.columns:
+                combined_sell_log_df[col] = default
+
+        for idx, row in combined_sell_log_df.iterrows():
+            market = str(row.get("market", "")).strip()  # ← 먼저 기본값으로 확보
+            try:
+                order_id = str(row.get("sell_uuid", "")).strip()
+                filled = str(row.get("filled", "")).lower().strip()
+
+                if not market or not order_id:
+                    continue  # 필수 정보 없으면 패스
+
+                # 'wait' 상태만 조회
+                if filled != "wait":
+                    continue
+
+                # ── 주문 상태 조회 ───────────────────────────────────────────
+                res_raw = get_order_result(order_id, market)
+                res = res_raw or {}
+                if not isinstance(res, dict):
+                    raise ValueError(f"invalid order result type: {type(res_raw)}")
+
+                state = str(res.get("state", "")).lower()
+                # ────────────────────────────────────────────────────────────
+
+                if state == "done":
+                    # 체결 처리
+                    combined_sell_log_df.at[idx, "filled"] = "done"
+                    combined_sell_log_df.at[idx, "time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    avg_buy_price = _safe_float(row.get("avg_buy_price", 0.0), 0.0)
+                    sell_price, sold_qty, total_amount, pnl = _extract_done_fields(res, avg_buy_price)
+
+                    logging.info(f"🎉 [{market}] 매도 체결! price={sell_price}, qty={sold_qty}, pnl={pnl:.6f}")
+                    notify_order_event(
+                        "체결",
+                        market,
+                        {
+                            "filled_qty": sold_qty,
+                            "price": sell_price,
+                            "total_amount": total_amount,
+                            "fee": 0.0,   # 필요 시 거래소 응답의 수수료 키로 대체
+                            "pnl": pnl,
+                        },
+                    )
+
+                elif state == "cancel":
+                    # (옵션) 취소 상태 반영
+                    combined_sell_log_df.at[idx, "filled"] = "cancel"
+                    combined_sell_log_df.at[idx, "time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    logging.info(f"ℹ️ [{market}] 매도 주문이 취소로 확인되어 로그를 갱신합니다.")
+
+                else:
+                    # 여전히 대기(wait) or 기타 상태
+                    logging.debug(f"[{market}] 주문 상태 유지: state={state}")
+
+            except (KeyError, ValueError, TypeError) as e:
+                logging.error(f"[sell_entry] 데이터 처리 오류({market}): {e}", exc_info=True)
+                notify_error("Sell Update", f"{market} 데이터 처리 오류: {e}")
+            except Exception as e:
+                logging.error(f"[sell_entry] 알 수 없는 오류({market}): {e}", exc_info=True)
+                notify_error("Sell Update", f"{market} 알 수 없는 오류: {e}")
+
+    # 6) 실제 주문 실행(전략이 새 주문을 만든 경우) 및 저장
+    try:
+        final_sell_log_df = execute_sell_orders(sell_log_df=combined_sell_log_df)
+
+        # (선택) 컬럼 순서 고정 저장 — 사람이 보기 편하고 안정적
+        final_cols = [
+            "market",
+            "avg_buy_price",
+            "quantity",
+            "target_sell_price",
+            "sell_uuid",
+            "filled",
+            "time",
+        ]
+        for c in final_cols:
+            if c not in final_sell_log_df.columns:
+                final_sell_log_df[c] = ""
+
+        final_sell_log_df[final_cols].to_csv("sell_log.csv", index=False)
+        logging.info("[sell_entry] 모든 주문 처리 완료 → sell_log.csv 저장 완료")
+    except Exception as e:
+        logging.error(f"🚨 매도 주문 실행 중 치명적 오류: {e}", exc_info=True)
+        notify_error("Sell Execution", f"매도 주문 실행 중 오류: {e}")
+        sys.exit(1)
+
+    logging.info("[sell_entry] 매도 전략 흐름 종료")

@@ -6,6 +6,7 @@
 """
 import config
 from api.binance.client import get_binance_client as _bn_client
+from api.bybit.account import get_accounts as _bb_get_accounts
 from api.bybit.price import (
     get_current_ask_price as _bb_get_ask,
     get_current_bid_price as _bb_get_bid,
@@ -39,7 +40,9 @@ from api.bybit.price import (
 def get_accounts():
     if config.EXCHANGE == "binance":
         return _bn_get_accounts()
-    raise NotImplementedError("get_accounts: Bybit 미구현")
+    if config.EXCHANGE == "bybit":
+        return _bb_get_accounts()
+    raise NotImplementedError("get_accounts: unknown EXCHANGE")
 
 
 def send_order(market: str, side: str, type: str, volume: float | None = None,

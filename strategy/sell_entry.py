@@ -105,7 +105,9 @@ def run():
 
     # 3) 전략으로부터 신규/정정 매도 주문 후보 생성
     try:
-        candidate_sell_df = generate_sell_orders(setting_df, holdings)
+        candidate_sell_df = generate_sell_orders(setting_df, holdings, sell_log_df)
+        if candidate_sell_df is None:
+            candidate_sell_df = pd.DataFrame(columns=sell_log_df.columns)
         if not isinstance(candidate_sell_df, pd.DataFrame):
             raise ValueError("generate_sell_orders()는 DataFrame을 반환해야 합니다.")
     except Exception as e:
@@ -215,3 +217,8 @@ def run():
         sys.exit(1)
 
     logging.info("[sell_entry] 매도 전략 흐름 종료")
+
+
+def run_sell_entry_flow() -> None:
+    """엔트리 호환 래퍼: 기존 entry.py가 기대하는 이름 유지"""
+    return run()

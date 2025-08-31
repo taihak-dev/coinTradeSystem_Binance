@@ -6,6 +6,11 @@
 """
 import config
 from api.binance.client import get_binance_client as _bn_client
+from api.bybit.price import (
+    get_current_ask_price as _bb_get_ask,
+    get_current_bid_price as _bb_get_bid,
+    get_minute_candles    as _bb_get_minutes,
+)
 
 # --- Binance 구현 위임 ---
 from api.binance.account import get_accounts as _bn_get_accounts
@@ -18,6 +23,14 @@ from api.binance.price import (
     get_current_bid_price as _bn_get_bid,
     get_current_ask_price as _bn_get_ask,
     get_minute_candles as _bn_get_minutes,
+)
+
+
+# --- Bybit (시세만) 위임 추가 ---
+from api.bybit.price import (
+    get_current_ask_price as _bb_get_ask,
+    get_current_bid_price as _bb_get_bid,
+    get_minute_candles    as _bb_get_minutes,
 )
 
 
@@ -52,19 +65,28 @@ def get_order_result(order_uuid: str, market: str) -> dict:
 def get_current_bid_price(symbol: str) -> float:
     if config.EXCHANGE == "binance":
         return _bn_get_bid(symbol)
-    raise NotImplementedError("get_current_bid_price: Bybit 미구현")
+    if config.EXCHANGE == "bybit":
+        return _bb_get_bid(symbol)
+    raise NotImplementedError("get_current_bid_price: unknown EXCHANGE")
 
 
 def get_current_ask_price(symbol: str) -> float:
     if config.EXCHANGE == "binance":
+        from api.binance.price import get_current_ask_price as _bn_get_ask
         return _bn_get_ask(symbol)
-    raise NotImplementedError("get_current_ask_price: Bybit 미구현")
+    if config.EXCHANGE == "bybit":
+        from api.bybit.price import get_current_ask_price as _bb_get_ask
+        return _bb_get_ask(symbol)
+    raise NotImplementedError(...)
+
 
 
 def get_minute_candles(symbol: str, unit: int = 1, to: str | None = None, count: int = 200):
     if config.EXCHANGE == "binance":
         return _bn_get_minutes(symbol, unit=unit, to=to, count=count)
-    raise NotImplementedError("get_minute_candles: Bybit 미구현")
+    if config.EXCHANGE == "bybit":
+        return _bb_get_minutes(symbol, unit=unit, to=to, count=count)
+    raise NotImplementedError("get_minute_candles: unknown EXCHANGE")
 
 
 def cancel_open_orders(symbol: str) -> None:

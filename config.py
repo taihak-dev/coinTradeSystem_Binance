@@ -32,12 +32,12 @@ BINANCE_API_KEY = _env_vars.get("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = _env_vars.get("BINANCE_API_SECRET", "")
 
 # 거래소 선택 (환경 변수 우선, 없으면 기본값 "binance")
-EXCHANGE = _env_vars.get("EXCHANGE", "binance").lower()
+EXCHANGE = os.getenv("EXCHANGE", _env_vars.get("EXCHANGE", "binance")).strip('"').lower()
 
 # === Bybit 설정 ===
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "")
-BYBIT_TESTNET = _env_vars.get("BYBIT_TESTNET", "False").lower() == "true"
+BYBIT_API_KEY    = (os.getenv("BYBIT_API_KEY", "")    or "").strip().strip('"')
+BYBIT_API_SECRET = (os.getenv("BYBIT_API_SECRET", "") or "").strip().strip('"')
+BYBIT_TESTNET = (os.getenv("BYBIT_TESTNET", None) or _env_vars.get("BYBIT_TESTNET", "False")).strip('"').lower() == "true"
 
 
 

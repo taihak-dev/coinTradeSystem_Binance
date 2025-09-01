@@ -1,5 +1,6 @@
 # api/bybit/order.py
 import logging
+from typing import Any, Dict
 from pybit.exceptions import FailedRequestError
 from api.bybit.client import get_bybit_client
 
@@ -16,23 +17,41 @@ def send_order(market: str, side: str, order_type: str, quantity: float,
     """
     http = get_bybit_client()
 
-    side_bybit = "Buy" if side.upper() == "BUY" else "Sell"
-    ord_type = "Market" if order_type.upper() == "MARKET" else "Limit"
+    from api.bybit.market import get_instrument_filters
+    from utils.precision_bybit import adjust_price_to_tick, adjust_qty_to_step, ensure_min_notional
+    import config
 
-    params = dict(
-        category="linear",
-        symbol=market,
-        side=side_bybit,
-        orderType=ord_type,
-        qty=str(quantity),
-        timeInForce="IOC" if ord_type == "Market" else "GTC",
-    )
-    if price is not None and ord_type == "Limit":
-        params["price"] = str(price)
+    meta = get_instrument_filters(market)
+    tick = meta["tickSize"]
+    min_price = meta["minPrice"]
+    step = meta["qtyStep"]
+    min_qty = meta["minOrderQty"]
+
+    ord_type = "Market" if order_type.upper() == "MARKET" else "Limit"
+    quantity_s = adjust_qty_to_step(quantity, step, min_qty)  # 문자열
+    price_s = None
+
+    if ord_type == "Limit" and price is not None:
+        price_s = adjust_price_to_tick(price, tick, min_price)  # 문자열
+        min_notional = 1.0 if config.BYBIT_TESTNET else 5.0
+        quantity_s = ensure_min_notional(price_s, quantity_s, min_notional, step, min_qty)  # 문자열
+
+    side_bybit = "Buy" if str(side).upper() == "BUY" else "Sell"
+
+    params: Dict[str, Any] = {
+        "category": "linear",
+        "symbol": market,
+        "side": side_bybit,
+        "orderType": ord_type,
+        "qty": str(quantity_s),
+        "timeInForce": "IOC" if ord_type == "Market" else "GTC",
+    }
+    if price_s is not None and ord_type == "Limit":
+        params["price"] = str(price_s)
     if reduce_only:
         params["reduceOnly"] = True
     if close_position:
-        params["closeOnTrigger"] = True  # 필요 시 사용
+        params["closeOnTrigger"] = True
 
     resp = http.place_order(**params)
     oid = ((resp.get("result") or {}).get("orderId")) or ""

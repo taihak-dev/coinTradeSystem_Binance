@@ -27,11 +27,10 @@ from api.binance.price import (
 )
 
 
-# --- Bybit (시세만) 위임 추가 ---
-from api.bybit.price import (
-    get_current_ask_price as _bb_get_ask,
-    get_current_bid_price as _bb_get_bid,
-    get_minute_candles    as _bb_get_minutes,
+from api.bybit.order import (
+    send_order as _bb_send_order,
+    get_order_result as _bb_get_order_result,
+    cancel_open_orders as _bb_cancel_open_orders,
 )
 
 
@@ -46,12 +45,12 @@ def get_accounts():
 
 
 
-def send_order(market: str, side: str, type: str, volume: float | None = None,
-               price: float | None = None, position_side: str = "BOTH",
-               closePosition: bool | None = None) -> dict:
+def send_order(*args, **kwargs):
     if config.EXCHANGE == "binance":
-        return _bn_send_order(market, side, type, volume, price, position_side, closePosition)
-    raise NotImplementedError("send_order: Bybit 미구현")
+        return _bn_send_order(*args, **kwargs)
+    if config.EXCHANGE == "bybit":
+        return _bb_send_order(*args, **kwargs)
+    raise NotImplementedError("send_order: unknown EXCHANGE")
 
 
 def cancel_order(order_uuid: str, market: str) -> dict:
@@ -63,7 +62,9 @@ def cancel_order(order_uuid: str, market: str) -> dict:
 def get_order_result(order_uuid: str, market: str) -> dict:
     if config.EXCHANGE == "binance":
         return _bn_get_order_result(order_uuid, market)
-    raise NotImplementedError("get_order_result: Bybit 미구현")
+    if config.EXCHANGE == "bybit":
+        return _bb_get_order_result(order_uuid, market)
+    raise NotImplementedError("get_order_result: unknown EXCHANGE")
 
 
 def get_current_bid_price(symbol: str) -> float:
@@ -76,12 +77,10 @@ def get_current_bid_price(symbol: str) -> float:
 
 def get_current_ask_price(symbol: str) -> float:
     if config.EXCHANGE == "binance":
-        from api.binance.price import get_current_ask_price as _bn_get_ask
         return _bn_get_ask(symbol)
     if config.EXCHANGE == "bybit":
-        from api.bybit.price import get_current_ask_price as _bb_get_ask
         return _bb_get_ask(symbol)
-    raise NotImplementedError(...)
+    raise NotImplementedError("get_current_ask_price: unknown EXCHANGE")
 
 
 
@@ -98,4 +97,7 @@ def cancel_open_orders(symbol: str) -> None:
         client = _bn_client()
         client.cancel_open_orders(symbol=symbol)
         return
-    raise NotImplementedError("cancel_open_orders: Bybit 미구현")
+    if config.EXCHANGE == "bybit":
+        _bb_cancel_open_orders(symbol)
+        return
+    raise NotImplementedError("cancel_open_orders: unknown EXCHANGE")

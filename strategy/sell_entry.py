@@ -1,7 +1,7 @@
 # strategy/sell_entry.py
 
 import logging
-import os
+import os  # os 모듈이 이미 import 되어 있는지 확인 (없으면 추가)
 
 import pandas as pd
 
@@ -11,7 +11,6 @@ from strategy.casino_strategy import generate_sell_orders
 from utils.common_utils import get_current_holdings
 from utils.telegram_notifier import notify_order_event, notify_error
 
-# --- 👇👇👇 거래소 선택 로직 (핵심 수정) 👇👇👇 ---
 if config.EXCHANGE == 'binance':
     logging.info("[SYSTEM] Sell Entry: 바이낸스 모드로 설정합니다.")
     from api.binance.order import get_order_result
@@ -20,16 +19,11 @@ elif config.EXCHANGE == 'bybit':
     from api.bybit.order import get_order_result
 else:
     raise ValueError(f"지원하지 않는 거래소입니다: {config.EXCHANGE}")
-# --- 👆👆👆 여기까지 수정 --- 👆👆👆
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def update_sell_log_status(sell_log_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    sell_log.csv에 기록된 'wait' 상태의 주문들이 실제로 체결되었는지 확인하고 상태를 업데이트합니다.
-    체결이 확인되면 텔레그램으로 상세 알림을 전송합니다.
-    """
     logging.info("[sell_entry.py] sell_log.csv 주문 상태 확인 및 정리 중...")
 
     if 'sell_uuid' not in sell_log_df.columns or sell_log_df['sell_uuid'].isnull().all():
@@ -71,6 +65,20 @@ def update_sell_log_status(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                     }
                     notify_order_event("체결", market, details)
 
+                    # --- 👇👇👇 여기가 새로 추가된 핵심 로직입니다 👇👇👇 ---
+                    # 매도 성공 후, 해당 코인과 관련된 매수 기록을 buy_log.csv에서 정리합니다.
+                    try:
+                        buy_log_path = "buy_log.csv"
+                        if os.path.exists(buy_log_path):
+                            buy_log_df = pd.read_csv(buy_log_path)
+                            # 방금 매도된 market을 제외한 나머지 기록만 남깁니다.
+                            remaining_buy_logs = buy_log_df[buy_log_df['market'] != market]
+                            remaining_buy_logs.to_csv(buy_log_path, index=False)
+                            logging.info(f"✅ {market} 매도 성공. 'buy_log.csv'에서 관련 기록을 정리했습니다.")
+                    except Exception as e:
+                        logging.error(f"❌ {market}의 'buy_log.csv' 정리 실패: {e}")
+                    # --- 👆👆👆 여기까지가 추가된 로직입니다 --- 👆👆👆
+
         except Exception as e:
             logging.error(f"  - ❌ 주문 상태 확인 중 오류: {market} (UUID: {uuid}): {e}")
             notify_error("update_sell_log_status", f"{market} 주문({uuid}) 상태 확인 실패: {e}")
@@ -80,10 +88,6 @@ def update_sell_log_status(sell_log_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_sell_entry_flow():
-    """
-    매도 전략의 전체 흐름을 실행합니다.
-    """
-    # 1. 설정 및 로그 파일 로드
     try:
         setting_df = pd.read_csv("setting.csv")
         sell_log_df = pd.read_csv("sell_log.csv") if os.path.exists("sell_log.csv") else pd.DataFrame()
@@ -91,28 +95,22 @@ def run_sell_entry_flow():
         logging.error(f"❌ 설정 또는 로그 파일 로드 실패: {e}")
         return
 
-    # 2. 'wait' 상태인 기존 주문들의 최종 상태를 확인하고 업데이트
     if not sell_log_df.empty:
         sell_log_df = update_sell_log_status(sell_log_df)
 
-    # 3. 현재 보유 자산 정보 가져오기
     try:
         holdings = get_current_holdings()
     except Exception as e:
         logging.error(f"❌ 보유 자산 정보 조회 실패: {e}")
         return
 
-    # 4. 보유 자산을 기준으로 신규/정정 매도 주문 목록 생성
     orders_to_action_df = generate_sell_orders(setting_df, holdings, sell_log_df)
 
-    # 5. 실행 로직 진행
     if not orders_to_action_df.empty:
         logging.info(f"🆕 신규/정정 매도 주문 {len(orders_to_action_df)}건 생성됨. 주문 실행을 시작합니다.")
 
-        # 'update'가 필요한 주문의 UUID 목록
         uuids_to_update = orders_to_action_df['sell_uuid'].dropna().tolist()
 
-        # 기존 로그에서 처리 대상(정정/신규) 주문들을 제외하고, 새로운 주문 목록과 합침
         sell_log_df_filtered = sell_log_df[~sell_log_df['sell_uuid'].isin(uuids_to_update)]
         combined_sell_log_df = pd.concat([sell_log_df_filtered, orders_to_action_df], ignore_index=True)
 

@@ -9,10 +9,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def _safe_float_convert(value, default=0.0):
-    """
-    문자열을 float으로 안전하게 변환합니다.
-    문자열이 비어 있거나 None이면 default 값을 반환합니다.
-    """
     if value and isinstance(value, str):
         return float(value)
     if isinstance(value, (int, float)):
@@ -20,10 +16,36 @@ def _safe_float_convert(value, default=0.0):
     return default
 
 
+# --- 👇👇👇 레버리지 설정 함수 (신규 추가) 👇👇👇 ---
+def set_leverage(market: str, leverage: int):
+    """
+    지정된 마켓(코인)에 대해 레버리지 배수를 설정합니다.
+    """
+    client = get_bybit_client()
+    leverage_str = str(leverage)
+    try:
+        logging.info(f"🔧 Bybit 레버리지 설정 시도: {market}, {leverage_str}x")
+        client.set_leverage(
+            category="linear",
+            symbol=market,
+            buyLeverage=leverage_str,
+            sellLeverage=leverage_str,
+        )
+        logging.info(f"✅ {market} 레버리지 {leverage_str}x 설정 완료.")
+    except Exception as e:
+        # 이미 해당 레버리지로 설정되어 있을 경우에도 오류가 발생할 수 있으므로, 경고로 처리하고 계속 진행합니다.
+        # (e.g., "Leverage has not been modified")
+        if "Leverage has not been modified" in str(e):
+            logging.warning(f"⚠️ {market} 레버리지가 이미 {leverage_str}x로 설정되어 있습니다.")
+        else:
+            logging.error(f"❌ {market} 레버리지 설정 실패: {e}", exc_info=True)
+            raise
+
+
+# --- 👆👆👆 여기까지 추가 --- 👆👆👆
+
+
 def send_order(market: str, side: str, volume: float, price: float, **kwargs) -> dict:
-    """
-    Bybit에 지정가 주문을 제출합니다.
-    """
     client = get_bybit_client()
     qty_str = str(volume)
     price_str = str(price)
@@ -53,10 +75,10 @@ def send_order(market: str, side: str, volume: float, price: float, **kwargs) ->
         raise
 
 
+# (이하 get_order_result, cancel_order 함수는 기존과 동일하므로 생략)
+# (기존 파일에서 위의 set_leverage 함수만 추가하시면 됩니다.)
+
 def get_order_result(market: str, order_uuid: str) -> dict:
-    """
-    Bybit에서 특정 주문의 상태를 조회합니다. (안전 변환 로직 추가)
-    """
     client = get_bybit_client()
 
     try:
@@ -67,7 +89,6 @@ def get_order_result(market: str, order_uuid: str) -> dict:
         order_data = None
         if history_response and history_response['result']['list']:
             order_data = history_response['result']['list'][0]
-            logging.debug(f"주문 ID {order_uuid}를 history에서 찾았습니다. 상태: {order_data.get('orderStatus')}")
 
         if not order_data:
             open_orders_response = client.get_open_orders(
@@ -75,7 +96,6 @@ def get_order_result(market: str, order_uuid: str) -> dict:
             )
             if open_orders_response and open_orders_response['result']['list']:
                 order_data = open_orders_response['result']['list'][0]
-                logging.debug(f"주문 ID {order_uuid}를 open_orders에서 찾았습니다. 상태: {order_data.get('orderStatus')}")
 
         if order_data:
             status = order_data.get('orderStatus')
@@ -84,8 +104,6 @@ def get_order_result(market: str, order_uuid: str) -> dict:
                 "Cancelled": "cancel", "Rejected": "error",
             }
 
-            # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
-            # 모든 숫자 변환에 _safe_float_convert 함수를 적용하여 ValueError 방지
             return {
                 "uuid": order_data.get("orderId"),
                 "state": state_map.get(status, "unknown"),
@@ -96,7 +114,6 @@ def get_order_result(market: str, order_uuid: str) -> dict:
                 "executed_qty": _safe_float_convert(order_data.get("cumExecQty")),
                 "cum_quote": _safe_float_convert(order_data.get("cumExecValue")),
             }
-            # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
         else:
             logging.warning(f"ⓘ 주문 상태 조회: {market}(id:{order_uuid}) - 주문이 존재하지 않음. 'done'으로 간주합니다.")
             return {"state": "done"}
@@ -107,9 +124,6 @@ def get_order_result(market: str, order_uuid: str) -> dict:
 
 
 def cancel_order(market: str, order_uuid: str) -> dict:
-    """
-    Bybit에 제출된 주문을 취소합니다.
-    """
     client = get_bybit_client()
     try:
         logging.info(f"🚫 Bybit 주문 취소 시도: {market}, UUID: {order_uuid}")

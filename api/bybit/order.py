@@ -1,7 +1,9 @@
 # api/bybit/order.py
 
 import logging
-import uuid
+
+from pybit.exceptions import InvalidRequestError  # <-- pybit 전용 예외 클래스를 import 합니다.
+
 from api.bybit.client import get_bybit_client
 
 # 로깅 설정
@@ -16,7 +18,6 @@ def _safe_float_convert(value, default=0.0):
     return default
 
 
-# --- 👇👇👇 레버리지 설정 함수 (신규 추가) 👇👇👇 ---
 def set_leverage(market: str, leverage: int):
     """
     지정된 마켓(코인)에 대해 레버리지 배수를 설정합니다.
@@ -32,17 +33,24 @@ def set_leverage(market: str, leverage: int):
             sellLeverage=leverage_str,
         )
         logging.info(f"✅ {market} 레버리지 {leverage_str}x 설정 완료.")
-    except Exception as e:
-        # 이미 해당 레버리지로 설정되어 있을 경우에도 오류가 발생할 수 있으므로, 경고로 처리하고 계속 진행합니다.
-        # (e.g., "Leverage has not been modified")
-        if "Leverage has not been modified" in str(e):
-            logging.warning(f"⚠️ {market} 레버리지가 이미 {leverage_str}x로 설정되어 있습니다.")
+
+    # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
+    except InvalidRequestError as e:
+        # Bybit API 오류 중, 'leverage not modified'(110043) 오류는
+        # 이미 해당 레버리지로 설정된 상태이므로 오류가 아닙니다.
+        # 이 경우, 경고만 로깅하고 다음 작업을 계속하도록 예외를 발생시키지 않습니다.
+        if "110043" in str(e) or "leverage not modified" in str(e).lower():
+            logging.warning(f"⚠️ {market} 레버리지가 이미 {leverage_str}x로 설정되어 있어 건너뜁니다.")
+            # 정상적인 상황이므로 여기서 함수를 종료하고 다음 단계로 넘어갑니다.
         else:
+            # 그 외의 다른 API 오류는 심각한 문제일 수 있으므로 오류를 발생시킵니다.
             logging.error(f"❌ {market} 레버리지 설정 실패: {e}", exc_info=True)
             raise
+    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
 
-
-# --- 👆👆👆 여기까지 추가 --- 👆👆👆
+    except Exception as e:
+        logging.error(f"❌ {market} 레버리지 설정 중 예상치 못한 오류 발생: {e}", exc_info=True)
+        raise
 
 
 def send_order(market: str, side: str, volume: float, price: float, **kwargs) -> dict:
@@ -76,7 +84,6 @@ def send_order(market: str, side: str, volume: float, price: float, **kwargs) ->
 
 
 # (이하 get_order_result, cancel_order 함수는 기존과 동일하므로 생략)
-# (기존 파일에서 위의 set_leverage 함수만 추가하시면 됩니다.)
 
 def get_order_result(market: str, order_uuid: str) -> dict:
     client = get_bybit_client()

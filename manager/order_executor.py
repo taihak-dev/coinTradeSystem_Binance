@@ -1,10 +1,11 @@
 # manager/order_executor.py
 
-import pandas as pd
-import time
-import config
 import logging
+
+import pandas as pd
 from binance.error import ClientError
+
+import config
 from utils.telegram_notifier import notify_order_event, notify_error
 
 if config.EXCHANGE == 'binance':
@@ -20,11 +21,7 @@ else:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- 👇👇👇 레버리지 설정을 한 번만 하도록 관리하는 변수 (추가) 👇👇👇 ---
 _configured_symbols = set()
-
-
-# --- 👆👆👆 여기까지 추가 --- 👆👆👆
 
 
 def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd.DataFrame:
@@ -42,24 +39,23 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
         price = float(row["target_price"])
         buy_amount_usdt = float(row["buy_amount"])
         old_uuid = row.get("buy_uuid")
+        leverage = 0
 
         try:
-            # --- 👇👇👇 레버리지 설정 로직 (핵심 추가) 👇👇👇 ---
-            # 해당 코인(market)에 대해 레버리지 설정을 한 적이 없다면, 설정 진행
             if market not in _configured_symbols:
                 market_setting = setting_df[setting_df['market'] == market].iloc[0]
                 leverage = int(market_setting['leverage'])
 
-                # 설정된 거래소에 따라 적절한 함수 호출
                 if config.EXCHANGE == 'binance':
                     margin_type = market_setting['margin_type']
                     set_leverage_and_margin_type(market, leverage, margin_type)
                 elif config.EXCHANGE == 'bybit':
                     set_leverage(market, leverage)
 
-                # 설정이 완료된 코인을 기록하여 중복 호출 방지
                 _configured_symbols.add(market)
-            # --- 👆👆👆 여기까지 추가 --- 👆👆👆
+            else:
+                market_setting = setting_df[setting_df['market'] == market].iloc[0]
+                leverage = int(market_setting['leverage'])
 
             if pd.notna(old_uuid) and isinstance(old_uuid, str) and old_uuid and old_uuid != "new":
                 logging.info(f"🔄 [{market}] 기존 매수 주문(UUID: {old_uuid}) 취소를 시도합니다.")
@@ -98,8 +94,8 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 logging.info(f"✅ [{market}] 매수 주문 제출 완료. 새 UUID: {new_order_uuid}, 상태: 'wait'")
                 notify_order_event(
                     "제출", market,
-                    {"type": "limit_buy", "price": adjusted_price, "quantity": adjusted_quantity, "leverage": leverage}
-                    # leverage 값 알림에 추가
+                    {"type": "limit_buy", "price": adjusted_price, "quantity": adjusted_quantity,
+                     "leverage": f"{leverage}x"}
                 )
             else:
                 raise ValueError(f"매수 주문 후 UUID를 얻지 못했습니다. 응답: {response}")
@@ -115,9 +111,9 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
     return buy_log_df
 
 
-# (이하 execute_sell_orders 함수는 수정할 필요 없음)
-
-def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
+# --- 👇👇👇 여기가 수정된 부분입니다 (함수 정의에 setting_df 추가) 👇👇👇 ---
+def execute_sell_orders(sell_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd.DataFrame:
+    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
     logging.info("--- 💸 매도 주문 실행 시작 ---")
     all_success = True
 
@@ -168,7 +164,8 @@ def execute_sell_orders(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                 leverage = int(market_setting['leverage'])
                 notify_order_event(
                     "제출", market,
-                    {"type": "limit_sell", "price": adjusted_price, "quantity": adjusted_quantity, "leverage": leverage}
+                    {"type": "limit_sell", "price": adjusted_price, "quantity": adjusted_quantity,
+                     "leverage": f"{leverage}x"}
                 )
             else:
                 raise ValueError(f"매도 주문 후 UUID를 얻지 못했습니다. 응답: {response}")

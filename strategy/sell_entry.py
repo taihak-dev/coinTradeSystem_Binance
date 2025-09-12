@@ -1,7 +1,7 @@
 # strategy/sell_entry.py
 
 import logging
-import os  # os 모듈이 이미 import 되어 있는지 확인 (없으면 추가)
+import os
 
 import pandas as pd
 
@@ -65,19 +65,15 @@ def update_sell_log_status(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                     }
                     notify_order_event("체결", market, details)
 
-                    # --- 👇👇👇 여기가 새로 추가된 핵심 로직입니다 👇👇👇 ---
-                    # 매도 성공 후, 해당 코인과 관련된 매수 기록을 buy_log.csv에서 정리합니다.
                     try:
                         buy_log_path = "buy_log.csv"
                         if os.path.exists(buy_log_path):
                             buy_log_df = pd.read_csv(buy_log_path)
-                            # 방금 매도된 market을 제외한 나머지 기록만 남깁니다.
                             remaining_buy_logs = buy_log_df[buy_log_df['market'] != market]
                             remaining_buy_logs.to_csv(buy_log_path, index=False)
                             logging.info(f"✅ {market} 매도 성공. 'buy_log.csv'에서 관련 기록을 정리했습니다.")
                     except Exception as e:
                         logging.error(f"❌ {market}의 'buy_log.csv' 정리 실패: {e}")
-                    # --- 👆👆👆 여기까지가 추가된 로직입니다 --- 👆👆👆
 
         except Exception as e:
             logging.error(f"  - ❌ 주문 상태 확인 중 오류: {market} (UUID: {uuid}): {e}")
@@ -115,7 +111,9 @@ def run_sell_entry_flow():
         combined_sell_log_df = pd.concat([sell_log_df_filtered, orders_to_action_df], ignore_index=True)
 
         try:
-            final_sell_log_df = execute_sell_orders(combined_sell_log_df)
+            # --- 👇👇👇 여기가 수정된 부분입니다 (setting_df를 함께 전달) 👇👇👇 ---
+            final_sell_log_df = execute_sell_orders(combined_sell_log_df, setting_df)
+            # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
             final_sell_log_df.to_csv("sell_log.csv", index=False)
             logging.info("[sell_entry.py] sell_log.csv 파일 저장 완료.")
         except Exception as e:

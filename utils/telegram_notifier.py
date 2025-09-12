@@ -37,7 +37,6 @@ def send_telegram_message(message: str):
 
 
 # --- 알림 유형별 헬퍼 함수 (편의를 위해) ---
-
 def notify_bot_status(status: str, detail: str = ""):
     """봇 시작, 종료, 정상 동작 알림"""
     icon = "✅" if "시작" in status or "정상" in status else "⚠️"
@@ -59,13 +58,15 @@ def notify_order_event(event_type: str, market: str, details: dict):
 
     msg = f"{icon} *[주문 {event_type}]* `{market}`\n"
     if event_type == "제출":
-        msg += f"수량: `{details.get('quantity'):.4f}`개, 가격: `{details.get('price'):.8f}` USDT\n"
+        msg += f"수량: `{details.get('quantity'):.6f}`개, 가격: `{details.get('price'):.8f}` USDT\n"
         msg += f"타입: `{details.get('type')}`, 레버리지: `{details.get('leverage')}`x\n"
     elif event_type == "체결" or event_type == "부분 체결":
-        msg += f"체결 수량: `{details.get('filled_qty'):.4f}`개, 체결가: `{details.get('price'):.8f}` USDT\n"
+        msg += f"체결 수량: `{details.get('filled_qty'):.6f}`개, 체결가: `{details.get('price'):.8f}` USDT\n"
         msg += f"총 금액: `{details.get('total_amount'):.2f}` USDT, 수수료: `{details.get('fee'):.2f}` USDT\n"
         if details.get('pnl') is not None:
-            msg += f"실현 손익: `{details.get('pnl'):.2f}` USDT"
+            pnl_val = details.get('pnl', 0)
+            pnl_icon = "🟢" if pnl_val >= 0 else "🔴"
+            msg += f"실현 손익: {pnl_icon}`{pnl_val:.2f}` USDT"
     elif event_type == "취소" or event_type == "실패":
         msg += f"사유: `{details.get('reason', '알 수 없음')}`\n"
 
@@ -74,28 +75,41 @@ def notify_order_event(event_type: str, market: str, details: dict):
 
 def notify_position_summary(summary: dict):
     """주기적인 포지션 및 계좌 요약 알림"""
-    msg = "*[📊 포지션/계좌 현황]*\n"
-    msg += f"💰 사용 가능 USDT: `{summary.get('usdt_balance'):.2f}`\n"
-    msg += f"📈 총 포트폴리오 가치: `{summary.get('total_portfolio_value'):.2f}`\n\n"
+    msg = "*[📊 포지션/계좌 현황 요약]*\n\n"
+
+    # --- 👇👇👇 여기가 수정된 부분입니다 👇👇👇 ---
+    # 'total_portfolio_value' -> 'total_wallet_balance' 로 키 이름 변경
+    total_balance = summary.get('total_wallet_balance')
+    if total_balance is not None:
+        msg += f"💰 **총 자산 가치:** `{total_balance:.2f}` USDT\n"
+    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
+
+    msg += f"💵 **사용 가능 USDT:** `{summary.get('usdt_balance'):.2f}` USDT\n"
+    msg += f"📈 **총 미실현 손익:** `{summary.get('total_unrealized_pnl'):.2f}` USDT\n"
 
     if summary.get('open_positions'):
-        msg += "--- *보유 포지션* ---\n"
-        for market, pos_info in summary['open_positions'].items():
-            pnl_color = "🟢" if pos_info['unrealized_pnl'] >= 0 else "🔴"
-            msg += f"`{market}`\n"
-            msg += f"  수량: `{pos_info['quantity']:.4f}`개, 평단가: `{pos_info['entry_price']:.8f}`\n"
-            msg += f"  현재가: `{pos_info['mark_price']:.8f}`\n"
-            msg += f"  미실현 PNL: {pnl_color}`{pos_info['unrealized_pnl']:.2f}` USDT (`{pos_info['roe']:.2f}`%)\n"
-            msg += f"  청산가: `{pos_info['liquidation_price']:.8f}`\n"
-        msg += "-------------------\n"
+        msg += "\n--- *보유 포지션 상세* ---\n"
+        sorted_positions = sorted(summary['open_positions'], key=lambda x: x.get('unRealizedProfit', 0), reverse=True)
+
+        for pos_info in sorted_positions:
+            pnl_val = pos_info.get('unRealizedProfit', 0)
+            pnl_icon = "🟢" if pnl_val >= 0 else "🔴"
+            roe_val = pos_info.get('roe', 0.0)
+
+            msg += f"\n*{pos_info.get('symbol')}* ({pos_info.get('leverage')}x)\n"
+            msg += f"  - **수량:** `{pos_info.get('positionAmt', 0):.6f}` 개\n"
+            msg += f"  - **평단가:** `{pos_info.get('entryPrice', 0):.8f}`\n"
+            msg += f"  - **현재가:** `{pos_info.get('markPrice', 0):.8f}`\n"
+            msg += f"  - **미실현 손익(수익률):** {pnl_icon}`{pnl_val:.2f}` USDT (`{roe_val:.2f}`%)\n"
+            msg += f"  - **청산가:** `{pos_info.get('liquidationPrice', 0):.8f}`\n"
+        msg += "--------------------------\n"
     else:
-        msg += "현재 열려있는 포지션이 없습니다.\n"
+        msg += "\n현재 열려있는 포지션이 없습니다.\n"
 
     send_telegram_message(msg)
 
 
-def notify_liquidation_warning(market: str, current_price: float, liquidation_price: float, entry_price: float,
-                               roe: float, warning_level: int):
+def notify_liquidation_warning(market, current_price, liquidation_price, entry_price, roe, warning_level):
     """청산 위험 경고 알림"""
     icon = "⚠️" if warning_level == 1 else "🚨🚨"
     title = "청산 위험 경고" if warning_level == 1 else "긴급 청산 경고!"
@@ -104,26 +118,6 @@ def notify_liquidation_warning(market: str, current_price: float, liquidation_pr
     msg += f"  현재가: `{current_price:.8f}`\n"
     msg += f"  청산가: `{liquidation_price:.8f}`\n"
     msg += f"  진입가: `{entry_price:.8f}`\n"
-    msg += f"  현재 손실률: `{roe:.2f}`%\n"
-
-    if liquidation_price > 0:  # 청산 가격이 유효할 때만 남은 비율 계산
-        if current_price > entry_price:  # 롱 포지션 (가격이 내려갈 때 청산)
-            price_diff_to_liq = current_price - liquidation_price
-            total_price_range = entry_price - liquidation_price if entry_price > liquidation_price else 0.00000001
-        else:  # 가격이 올라갈 때 청산되는 숏 포지션은 아님, 하지만 안전하게
-            price_diff_to_liq = liquidation_price - current_price  # 현재가와 청산가의 차이
-            total_price_range = liquidation_price - entry_price if liquidation_price > entry_price else 0.00000001
-
-        if total_price_range > 0:
-            remaining_pct = (price_diff_to_liq / total_price_range) * 100 if total_price_range > 0 else 0
-            if current_price > liquidation_price:  # 롱 포지션일 때, 현재가가 청산가보다 높으면 긍정적인 방향
-                msg += f"  청산까지 약 `{remaining_pct:.2f}`% 남음."
-            else:  # 현재가가 청산가보다 낮거나 같으면 이미 청산되었거나 초과
-                msg += "  *청산 가격 도달!* \n"
+    msg += f"  현재 손실률: `{roe:.2f}`%"
 
     send_telegram_message(msg)
-
-
-def notify_liquidation_occurred(market: str, final_pnl: float):
-    """강제 청산 발생 알림"""
-    send_telegram_message(f"💀 *[강제 청산 발생!]* `{market}` 포지션이 강제 청산되었습니다.\n최종 손실: `{final_pnl:.2f}` USDT")

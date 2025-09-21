@@ -8,38 +8,25 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def get_last_small_flow_or_initial_price(market_buy_log: pd.DataFrame) -> float | None:
-    # --- 👇👇👇 안전장치 추가 👇👇👇 ---
-    if market_buy_log.empty:
-        return None
-    # --- 👆👆👆 여기까지 추가 --- 👆👆👆
+    if market_buy_log.empty: return None
     filtered_log = market_buy_log[
         (market_buy_log["filled"] == "done") &
         (market_buy_log["buy_type"].isin(["initial", "small_flow"]))
         ]
-    if not filtered_log.empty:
-        return filtered_log.iloc[-1]["target_price"]
-    return None
+    return filtered_log.iloc[-1]["target_price"] if not filtered_log.empty else None
 
 
 def get_last_large_flow_or_initial_price(market_buy_log: pd.DataFrame) -> float | None:
-    # --- 👇👇👇 안전장치 추가 👇👇👇 ---
-    if market_buy_log.empty:
-        return None
-    # --- 👆👆👆 여기까지 추가 --- 👆👆👆
+    if market_buy_log.empty: return None
     filtered_log = market_buy_log[
         (market_buy_log["filled"] == "done") &
         (market_buy_log["buy_type"].isin(["initial", "large_flow"]))
         ]
-    if not filtered_log.empty:
-        return filtered_log.iloc[-1]["target_price"]
-    return None
+    return filtered_log.iloc[-1]["target_price"] if not filtered_log.empty else None
 
 
-# (이하 generate_buy_orders, generate_sell_orders 함수는 이전과 동일하므로 생략)
-# (기존 파일에서 위의 두 함수만 수정하시면 됩니다)
-
-def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, current_prices: dict,
-                        holdings: dict) -> pd.DataFrame:
+def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, current_prices: dict, holdings: dict,
+                        usdt_balance: float) -> pd.DataFrame:
     new_orders = []
 
     for _, setting in setting_df.iterrows():
@@ -52,16 +39,16 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
         market_buy_log = buy_log_df[buy_log_df["market"] == market] if not buy_log_df.empty else pd.DataFrame()
 
         if market_buy_log.empty and market not in holdings:
-            logging.info(f"🆕 {market}: 최초 매수 주문 생성을 시도합니다.")
-            new_orders.append({
-                "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "market": market,
-                "target_price": current_price,
-                "buy_amount": float(setting["unit_size"]),
-                "buy_units": 0,
-                "buy_type": "initial",
-                "filled": "update"
-            })
+            buy_amount = float(setting["unit_size"])
+            if usdt_balance >= buy_amount:
+                logging.info(f"🆕 {market}: 최초 매수 주문 생성을 시도합니다.")
+                new_orders.append({
+                    "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
+                    "target_price": current_price, "buy_amount": buy_amount,
+                    "buy_units": 0, "buy_type": "initial", "filled": "update"
+                })
+            else:
+                logging.warning(f"⚠️ {market} 최초 매수 실패 (잔고 부족). 필요: {buy_amount:.2f}, 보유: {usdt_balance:.2f}")
             continue
 
         last_small_flow_price = get_last_small_flow_or_initial_price(market_buy_log)
@@ -77,12 +64,16 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
                 if not market_buy_log[
                     (market_buy_log["buy_type"] == "small_flow") & (market_buy_log["buy_units"] == i)].empty:
                     continue
-                new_orders.append({
-                    "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "market": market, "target_price": target_price,
-                    "buy_amount": float(setting["unit_size"]),
-                    "buy_units": i, "buy_type": "small_flow", "filled": "update"
-                })
+                buy_amount = float(setting["unit_size"]) * float(setting["small_flow_units"])
+                if usdt_balance >= buy_amount:
+                    new_orders.append({
+                        "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
+                        "target_price": target_price, "buy_amount": buy_amount,
+                        "buy_units": i, "buy_type": "small_flow", "filled": "update"
+                    })
+                else:
+                    logging.warning(
+                        f"⚠️ {market} small_flow 매수 실패 (잔고 부족). 필요: {buy_amount:.2f}, 보유: {usdt_balance:.2f}")
                 break
 
         for i in range(1, int(setting["large_flow_units"]) + 1):
@@ -91,12 +82,16 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
                 if not market_buy_log[
                     (market_buy_log["buy_type"] == "large_flow") & (market_buy_log["buy_units"] == i)].empty:
                     continue
-                new_orders.append({
-                    "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "market": market, "target_price": target_price,
-                    "buy_amount": float(setting["unit_size"]),
-                    "buy_units": i, "buy_type": "large_flow", "filled": "update"
-                })
+                buy_amount = float(setting["unit_size"]) * float(setting["large_flow_units"])
+                if usdt_balance >= buy_amount:
+                    new_orders.append({
+                        "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
+                        "target_price": target_price, "buy_amount": buy_amount,
+                        "buy_units": i, "buy_type": "large_flow", "filled": "update"
+                    })
+                else:
+                    logging.warning(
+                        f"⚠️ {market} large_flow 매수 실패 (잔고 부족). 필요: {buy_amount:.2f}, 보유: {usdt_balance:.2f}")
                 break
 
     return pd.DataFrame(new_orders)
@@ -108,44 +103,31 @@ def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: 
 
     if not sell_log_df.empty:
         wait_sell_orders = sell_log_df[sell_log_df['filled'] == 'wait'].copy()
-        for idx, row in wait_sell_orders.iterrows():
+        for _, row in wait_sell_orders.iterrows():
             market = row['market']
             processed_markets.add(market)
-
-            if market not in holdings:
-                continue
-
-            info = holdings[market]
-            setting = setting_df[setting_df['market'] == market].iloc[0]
-            avg_buy_price = info['avg_price']
-            quantity_to_sell = info['balance']
+            if market not in holdings: continue
+            info, setting = holdings[market], setting_df[setting_df['market'] == market].iloc[0]
+            avg_buy_price, quantity_to_sell = info['avg_price'], info['balance']
             target_price = round(avg_buy_price * (1 + float(setting['take_profit_pct'])), 8)
-
-            if np.isclose(row['target_sell_price'], target_price) and np.isclose(row['quantity'], quantity_to_sell):
-                continue
-
-            row['target_sell_price'] = target_price
-            row['quantity'] = quantity_to_sell
-            row['filled'] = 'update'
-            orders_to_action.append(row.to_dict())
+            if not np.isclose(row['target_sell_price'], target_price) or not np.isclose(row['quantity'],
+                                                                                        quantity_to_sell):
+                row['target_sell_price'], row['quantity'], row['filled'] = target_price, quantity_to_sell, 'update'
+                orders_to_action.append(row.to_dict())
 
     for market, info in holdings.items():
-        if market in processed_markets:
-            continue
-
+        if market in processed_markets: continue
         setting = setting_df[setting_df['market'] == market]
         if setting.empty: continue
-
         target_price = round(info['avg_price'] * (1 + float(setting.iloc[0]['take_profit_pct'])), 8)
         new_order = {
-            "market": market,
-            "avg_buy_price": info['avg_price'],
-            "quantity": info['balance'],
-            "target_sell_price": target_price,
-            "sell_uuid": "new",
-            "filled": "new",
+            "market": market, "avg_buy_price": info['avg_price'], "quantity": info['balance'],
+            "target_sell_price": target_price, "sell_uuid": "new", "filled": "new",
             "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         orders_to_action.append(new_order)
 
-    return pd.DataFrame(orders_to_action)
+    # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
+    # if orders_to_action:  <-- 이 불필요한 조건문을 제거합니다.
+    return pd.DataFrame(orders_to_action)  # 주문 목록이 비어있더라도 항상 DataFrame을 반환합니다.
+    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆

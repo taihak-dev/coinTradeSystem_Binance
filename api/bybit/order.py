@@ -54,12 +54,16 @@ def set_leverage(market: str, leverage: int):
 
 
 def send_order(market: str, side: str, volume: float, price: float, **kwargs) -> dict:
+    """
+    Bybit에 지정가 주문을 제출합니다.
+    """
     client = get_bybit_client()
     qty_str = str(volume)
     price_str = str(price)
 
     try:
         logging.info(f"➡️ Bybit 주문 제출 시도: {market}, {side}, 수량: {qty_str}, 가격: {price_str}")
+
         response = client.place_order(
             category="linear",
             symbol=market,
@@ -67,7 +71,11 @@ def send_order(market: str, side: str, volume: float, price: float, **kwargs) ->
             orderType="Limit",
             qty=qty_str,
             price=price_str,
+            # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
+            # 'PostOnly'는 즉시 체결될 경우 주문을 취소시키므로,
+            # 'GTC'(Good-Til-Cancelled)로 변경하여 반드시 체결되도록 합니다.
             timeInForce="GTC",
+            # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
         )
 
         if response and response.get('retCode') == 0:

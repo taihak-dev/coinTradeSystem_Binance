@@ -24,66 +24,64 @@ def _safe_float_convert(value, default=0.0):
 
 def get_accounts():
     """
-    Bybit 선물 계좌의 잔고 및 현재 포지션 정보를 조회합니다.
+    Bybit 통합 계좌(Unified Trading)의 잔고 및 현재 포지션 정보를 조회합니다.
     """
-    logging.info("💰 Bybit 선물 계좌 정보 조회 시도 중...")
+    logging.info("💰 Bybit 통합 계좌 정보 조회 시도 중...")
     client = get_bybit_client()
 
     try:
-        # 1. 통합 계좌의 '전체' 자산 정보를 조회합니다.
+        # 1. 통합 계좌의 자산 정보를 조회합니다.
         wallet_info = client.get_wallet_balance(accountType="UNIFIED")
 
         usdt_balance = 0.0
         total_wallet_balance = 0.0
         total_unrealized_pnl = 0.0
 
-        # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
-        if wallet_info and wallet_info['result']['list']:
-            asset_list = wallet_info['result']['list']
+        # --- ▼▼▼ 최종 수정 부분 ▼▼▼ ---
+        # 진단 스크립트를 통해 확인된 정확한 API 응답 구조를 기반으로 잔고를 파싱합니다.
+        if wallet_info and wallet_info.get('retCode') == 0 and wallet_info['result']['list']:
 
-            # 총 자산 가치와 총 미실현 손익은 목록의 첫 번째 항목에서 가져옵니다. (이 값들은 모든 자산 항목에 동일하게 포함됨)
-            summary_data = asset_list[0]
+            # 'result'->'list' 안에는 단 하나의 요약 객체만 존재합니다.
+            summary_data = wallet_info['result']['list'][0]
+
+            # [해결] 이 요약 객체에서 'totalAvailableBalance' 키를 직접 읽어옵니다.
+            # 이것이 USDT 보유 여부와 상관없이 실제 선물 거래에 사용할 수 있는 총 증거금입니다.
+            usdt_balance = _safe_float_convert(summary_data.get('totalAvailableBalance'))
+
+            # 나머지 정보들도 동일한 위치에서 가져옵니다.
             total_wallet_balance = _safe_float_convert(summary_data.get('totalWalletBalance'))
-            total_unrealized_pnl = _safe_float_convert(summary_data.get('totalUnrealisedPnl'))
+            total_unrealized_pnl = _safe_float_convert(
+                summary_data.get('totalPerpUPL'))  # 선물 미실현 손익은 'totalPerpUPL'이 더 정확할 수 있습니다.
 
-            # 사용 가능 USDT 잔고를 찾기 위해 전체 자산 목록을 순회합니다.
-            for asset in asset_list:
-                if asset.get('coin') == 'USDT':
-                    # 'availableToWithdraw'는 출금 가능액, 'availableBalance'는 거래에 사용 가능한 증거금입니다.
-                    # 거래 목적이므로 'availableBalance'를 사용하는 것이 더 적합할 수 있습니다.
-                    usdt_balance = _safe_float_convert(asset.get('availableBalance'))
-                    break  # USDT를 찾았으면 루프 종료
-        # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
+            logging.info(f"✅ 계좌 총 자산: {total_wallet_balance:.2f} USDT")
+            logging.info(f"✅ 선물 미실현 손익: {total_unrealized_pnl:.2f} USDT")
+            logging.info(f"✅ >> 거래에 사용 가능한 총 잔고(USDT 환산): {usdt_balance:.2f} USDT <<")
 
-        logging.info(f"✅ 사용 가능 잔고: {usdt_balance:.2f} USDT, 총 자산: {total_wallet_balance:.2f} USDT")
+        else:
+            logging.warning("⚠️ Bybit 계좌에서 자산 정보를 가져오지 못했거나 비어있습니다.")
+        # --- ▲▲▲ 최종 수정 완료 ▲▲▲ ---
 
         # 2. 현재 열려있는 포지션 상세 정보 조회
         positions_info = client.get_positions(category="linear", settleCoin="USDT")
 
         open_positions = []
-        if positions_info and positions_info['result']['list']:
+        if positions_info and positions_info.get('retCode') == 0 and positions_info['result']['list']:
             for pos in positions_info['result']['list']:
-                position_size = _safe_float_convert(pos.get('size'))
-
-                if position_size > 0:
+                if _safe_float_convert(pos.get('size')) > 0:
                     entry_price = _safe_float_convert(pos.get('avgPrice'))
+                    position_size = _safe_float_convert(pos.get('size'))
                     unrealized_pnl = _safe_float_convert(pos.get('unrealisedPnl'))
                     leverage = _safe_float_convert(pos.get('leverage'), default=1.0)
                     mark_price = _safe_float_convert(pos.get('markPrice'))
                     liquidation_price = _safe_float_convert(pos.get('liqPrice'))
-
                     initial_margin = (position_size * entry_price) / leverage if leverage > 0 else 0
                     roe = (unrealized_pnl / initial_margin) * 100 if initial_margin > 0 else 0
 
                     processed_pos = {
-                        'symbol': pos.get('symbol'),
-                        'positionAmt': position_size,
-                        'entryPrice': entry_price,
-                        'markPrice': mark_price,
-                        'unRealizedProfit': unrealized_pnl,
-                        'liquidationPrice': liquidation_price,
-                        'leverage': int(leverage),
-                        'roe': roe,
+                        'symbol': pos.get('symbol'), 'positionAmt': position_size,
+                        'entryPrice': entry_price, 'markPrice': mark_price,
+                        'unRealizedProfit': unrealized_pnl, 'liquidationPrice': liquidation_price,
+                        'leverage': int(leverage), 'roe': roe,
                     }
                     open_positions.append(processed_pos)
 
@@ -97,5 +95,8 @@ def get_accounts():
         }
 
     except Exception as e:
-        logging.error(f"❌ Bybit 계좌 정보 조회 중 오류 발생: {e}", exc_info=True)
-        raise
+        logging.error(f"❌ Bybit 계좌 정보 조회 중 심각한 오류 발생: {e}", exc_info=True)
+        return {
+            "usdt_balance": 0.0, "total_wallet_balance": 0.0,
+            "total_unrealized_pnl": 0.0, "open_positions": [],
+        }

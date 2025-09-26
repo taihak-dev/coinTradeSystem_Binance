@@ -1,5 +1,2 @@
 time,market,target_price,buy_amount,buy_units,buy_type,buy_uuid,filled
-2025-09-19 01:45:26,MNTUSDT,1.8597,100.0,0,initial,33cea07a-369c-4066-9eee-58218331276a,done
-2025-09-19 07:22:52,MNTUSDT,1.785312,200.0,1,small_flow,8166e008-cb23-4640-ab8d-9c8cb90468ea,done
-2025-09-20 08:28:10,MNTUSDT,1.64248704,200.0,2,small_flow,fa48a7f7-f5c4-45a9-9726-9d8a72e30cc1,done
-2025-09-21 17:21:04,MNTUSDT,1.617939,1400.0,1,large_flow,,error
+2025-09-26 23:09:03,MNTUSDT,1.7038,100.0,0,initial,07f3c718-ae33-4be6-b49c-8a69df7bd3f3,wait

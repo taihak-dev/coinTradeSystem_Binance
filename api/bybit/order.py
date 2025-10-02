@@ -53,41 +53,49 @@ def set_leverage(market: str, leverage: int):
         raise
 
 
-def send_order(market: str, side: str, volume: float, price: float, **kwargs) -> dict:
+def send_order(market: str, side: str, quantity: float, price: float = None):
     """
-    Bybit에 지정가 주문을 제출합니다.
+    바이비트에 주문을 전송합니다.
+    - 매수(bid)는 시장가(Market)로, 매도(ask)는 지정가(Limit)로 자동 처리합니다.
     """
     client = get_bybit_client()
-    qty_str = str(volume)
-    price_str = str(price)
+    side_map = {"bid": "Buy", "ask": "Sell"}
+    order_side = side_map[side]
 
     try:
-        logging.info(f"➡️ Bybit 주문 제출 시도: {market}, {side}, 수량: {qty_str}, 가격: {price_str}")
+        # API 요청을 위한 기본 파라미터 구성
+        params = {
+            'category': "linear",
+            'symbol': market,
+            'side': order_side,
+            'qty': str(quantity),
+        }
 
-        response = client.place_order(
-            category="linear",
-            symbol=market,
-            side="Buy" if side.lower() == 'buy' else "Sell",
-            orderType="Limit",
-            qty=qty_str,
-            price=price_str,
-            # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
-            # 'PostOnly'는 즉시 체결될 경우 주문을 취소시키므로,
-            # 'GTC'(Good-Til-Cancelled)로 변경하여 반드시 체결되도록 합니다.
-            timeInForce="GTC",
-            # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
-        )
+        # 주문의 종류(side)에 따라 주문 유형(orderType)을 동적으로 결정
+        if order_side == "Buy":
+            # 매수 주문일 경우, 시장가(Market)로 설정
+            params['orderType'] = "Market"
+            logging.info(f"➡️ 바이비트 시장가 매수 주문 전송 시도: {market}, 수량={quantity}")
+            # 시장가 주문에는 가격(price) 파라미터가 필요 없습니다.
 
-        if response and response.get('retCode') == 0:
-            order_id = response['result']['orderId']
-            logging.info(f"✅ 주문 제출 성공. Order ID: {order_id}")
-            return {"orderId": order_id}
-        else:
-            logging.error(f"❌ 주문 제출 실패: {response.get('retMsg')}")
-            raise Exception(f"Bybit order placement failed: {response.get('retMsg')}")
+        else:  # order_side == "Sell"
+            # 매도 주문일 경우, 지정가(Limit)로 설정
+            params['orderType'] = "Limit"
+            if price is None:
+                raise ValueError("지정가(Limit) 매도 주문에는 가격(price)이 반드시 필요합니다.")
+            params['price'] = str(price)
+            params['timeInForce'] = 'GTC'
+            logging.info(f"➡️ 바이비트 지정가 매도 주문 전송 시도: {market}, 수량={quantity}, 가격={price}")
+
+        # 구성된 파라미터로 주문 실행
+        order_result = client.place_order(**params)
+
+        order_id = order_result.get('result', {}).get('orderId')
+        logging.info(f"✅ 주문 제출 성공. Order ID: {order_id}")
+        return order_id
 
     except Exception as e:
-        logging.error(f"❌ Bybit 주문 제출 중 오류 발생: {e}", exc_info=True)
+        logging.error(f"❌ 바이비트 주문 실패: {e}", exc_info=True)
         raise
 
 

@@ -8,6 +8,7 @@ __pycache__/
 db/*.sqlite
 logs/
 *.csv
+*.xls
 
 # OS/IDE
 .DS_Store

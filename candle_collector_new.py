@@ -12,8 +12,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- 사용자 설정 ---
 MARKET_TO_COLLECT = "XRPUSDT"
-START_DATE_STR = "2025-08-01 00:00:00"
-END_DATE_STR = "2025-08-15 23:59:59"
+START_DATE_STR = "2025-08-15 00:00:00"
+END_DATE_STR = "2025-09-27 23:59:59"
 
 # --- DB 설정 ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))

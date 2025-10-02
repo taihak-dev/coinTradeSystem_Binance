@@ -22,10 +22,11 @@ BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "False").lower() in ('true', '1',
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "False").lower() in ('true', '1', 't')
+BYBIT_MEMBER_ID = os.getenv("BYBIT_MEMBER_ID")
 # --- 👆👆👆 여기까지 추가 --- 👆👆👆
 
 # --- 실행 주기 및 알림 설정 ---
-RUN_INTERVAL_SECONDS = int(os.getenv("RUN_INTERVAL_SECONDS", "10"))
+RUN_INTERVAL_SECONDS = int(os.getenv("RUN_INTERVAL_SECONDS", "5"))
 HEALTH_CHECK_INTERVAL_SECONDS = int(os.getenv("HEALTH_CHECK_INTERVAL_SECONDS", "3600"))
 POSITION_SUMMARY_INTERVAL_SECONDS = int(os.getenv("POSITION_SUMMARY_INTERVAL_SECONDS", "21600"))
 

@@ -69,7 +69,7 @@ def simulate_with_db(
         now, current_price = row["시간"], row["종가"]
         events, last_trade_amount, last_trade_fee = [], 0.0, 0.0
 
-        new_buy_orders_df = generate_buy_orders(setting_df, buy_log_df, {market: current_price}, holdings)
+        new_buy_orders_df = generate_buy_orders(setting_df, buy_log_df, {market: current_price}, holdings, cash)
 
         # ❗️ 변경점: buy_log_df가 비어있는 첫 경우를 따로 처리하여 경고 원천 차단
         if not new_buy_orders_df.empty:
@@ -124,6 +124,9 @@ def simulate_with_db(
                 holdings.pop(market, None)
                 sell_log_df = sell_log_df[sell_log_df['market'] != market]
                 total_buy_info = {'amount': 0.0, 'volume': 0.0}
+
+                buy_log_df = buy_log_df[buy_log_df['market'] != market].copy()
+                logging.info(f"🧹 {market} 매도 완료. 매수 기록을 초기화합니다.")
 
         quantity = holdings.get(market, {}).get('balance', 0)
         avg_price = holdings.get(market, {}).get('avg_price', 0)

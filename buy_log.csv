@@ -1,2 +1,3 @@
 time,market,target_price,buy_amount,buy_units,buy_type,buy_uuid,filled
-2025-10-02 21:49:09,MNTUSDT,1.9918,100.0,0,initial,6a582832-3af5-4c12-9fe1-b92fac38b61d,done
+2025-10-03 09:31:08,BNBUSDT,1086.9,50.0,0,initial,0d2839f2-ba1f-4ad3-ba3b-893700540068,done
+2025-10-03 09:31:08,ETHUSDT,4469.79,50.0,0,initial,f63071f8-010c-45c3-a5cf-eeef73ba41d4,done

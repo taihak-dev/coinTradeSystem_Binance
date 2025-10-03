@@ -1,190 +1,110 @@
 # manager/order_executor.py
 
 import logging
-
 import pandas as pd
-from binance.error import ClientError
-
 import config
 from utils.telegram_notifier import notify_order_event, notify_error
+from pybit.exceptions import InvalidRequestError as BybitInvalidRequestError
+from binance.error import ClientError as BinanceClientError
 
+# --- 거래소별 함수 임포트 ---
 if config.EXCHANGE == 'binance':
-    logging.info("[SYSTEM] Order Executor: 바이낸스 모드로 설정합니다.")
-    from api.binance.order import send_order, cancel_order, set_leverage_and_margin_type
+    from api.binance.order import send_order, cancel_order
     from utils.binance_price_utils import adjust_price_to_tick, adjust_quantity_to_step
 elif config.EXCHANGE == 'bybit':
-    logging.info("[SYSTEM] Order Executor: 바이빗 모드로 설정합니다.")
-    from api.bybit.order import send_order, cancel_order, set_leverage
+    from api.bybit.order import send_order, cancel_order
     from utils.bybit_price_utils import adjust_price_to_tick, adjust_quantity_to_step
 else:
     raise ValueError(f"지원하지 않는 거래소입니다: {config.EXCHANGE}")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 _configured_symbols = set()
 
 
 def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd.DataFrame:
     logging.info("--- 🛒 매수 주문 실행 시작 ---")
-    global _configured_symbols
-    all_success = True
+    update_orders = buy_log_df[buy_log_df['filled'] == 'update'].copy()
 
-    orders_to_process = buy_log_df[buy_log_df['filled'] == 'update'].copy()
-    if orders_to_process.empty:
-        logging.info("실행할 신규/정정 매수 주문이 없습니다.")
-        return buy_log_df
-
-    for idx, row in orders_to_process.iterrows():
-        market = row["market"]
-        price = float(row["target_price"])
-        buy_amount_usdt = float(row["buy_amount"])
-        old_uuid = row.get("buy_uuid")
-        leverage = 0
-
+    for idx, row in update_orders.iterrows():
         try:
+            market = row['market']
+            setting = setting_df[setting_df['market'] == market].iloc[0]
+            leverage = int(setting['leverage'])
+
             if market not in _configured_symbols:
-                market_setting = setting_df[setting_df['market'] == market].iloc[0]
-                leverage = int(market_setting['leverage'])
-
-                if config.EXCHANGE == 'binance':
-                    margin_type = market_setting['margin_type']
-                    set_leverage_and_margin_type(market, leverage, margin_type)
-                elif config.EXCHANGE == 'bybit':
+                if config.EXCHANGE == 'bybit':
+                    from api.bybit.order import set_leverage
                     set_leverage(market, leverage)
-
                 _configured_symbols.add(market)
-            else:
-                market_setting = setting_df[setting_df['market'] == market].iloc[0]
-                leverage = int(market_setting['leverage'])
 
-            if pd.notna(old_uuid) and isinstance(old_uuid, str) and old_uuid and old_uuid != "new":
-                logging.info(f"🔄 [{market}] 기존 매수 주문(UUID: {old_uuid}) 취소를 시도합니다.")
-                try:
-                    cancel_order(market=market, order_uuid=str(old_uuid))
-                except Exception as cancel_e:
-                    logging.warning(f"⚠️ 기존 주문 취소 중 오류 발생 (무시하고 계속): {cancel_e}")
+            quantity = float(row['buy_amount']) / float(row['target_price'])
+            quantity = adjust_quantity_to_step(market, quantity)
+            price = adjust_price_to_tick(market, float(row['target_price']))
 
-            adjusted_price = adjust_price_to_tick(market, price)
-
-            if adjusted_price > 0:
-                quantity_to_buy = buy_amount_usdt / adjusted_price
-                adjusted_quantity = adjust_quantity_to_step(market, quantity_to_buy)
-            else:
-                raise ValueError("주문 가격이 0보다 커야 합니다.")
-
-            if adjusted_quantity <= 0:
-                logging.warning(f"⚠️ [{market}] 주문 수량이 0 이하로 조정되어 주문을 제출하지 않습니다.")
-                buy_log_df.at[idx, "filled"] = "error"
-                buy_log_df.at[idx, "buy_uuid"] = "ADJUSTED_TO_ZERO"
+            if quantity <= 0:
+                logging.warning(f"⚠️ [{market}] 계산된 주문 수량이 0 이하이므로 주문을 건너뜁니다.")
                 continue
 
-            logging.info(f"➡️ [{market}] 신규 매수 주문 제출: 가격={adjusted_price}, 수량={adjusted_quantity}")
-
-            response = send_order(
+            # order_type 결정 로직을 제거하고, send_order 호출을 단순화합니다.
+            # price는 api/bybit/order.py에서 시장가일 경우 무시하므로 항상 전달합니다.
+            new_uuid = send_order(
                 market=market,
-                side='buy',
-                volume=adjusted_quantity,
-                price=adjusted_price
+                side="bid",
+                price=price,
+                quantity=quantity
             )
 
-            new_order_uuid = response.get("orderId") or response.get("uuid")
-            if new_order_uuid:
-                buy_log_df.at[idx, "buy_uuid"] = new_order_uuid
-                buy_log_df.at[idx, "filled"] = "wait"
-                logging.info(f"✅ [{market}] 매수 주문 제출 완료. 새 UUID: {new_order_uuid}, 상태: 'wait'")
-                notify_order_event(
-                    "제출", market,
-                    {"type": "limit_buy", "price": adjusted_price, "quantity": adjusted_quantity,
-                     "leverage": f"{leverage}x"}
-                )
-            else:
-                raise ValueError(f"매수 주문 후 UUID를 얻지 못했습니다. 응답: {response}")
+            buy_log_df.loc[idx, 'buy_uuid'] = new_uuid
+            buy_log_df.loc[idx, 'filled'] = 'wait'
+            logging.info(f"✅ [{market}] 매수 주문 제출 완료. 새 UUID: {new_uuid}, 상태: 'wait'")
 
         except Exception as e:
-            logging.error(f"❌ [{market}] 매수 주문 실패: {e}", exc_info=True)
-            notify_error("execute_buy_orders", f"{market} 매수 주문 실패: {e}")
-            buy_log_df.at[idx, "filled"] = "error"
-            all_success = False
+            logging.error(f"❌ [{row['market']}] 매수 주문 실패: {e}", exc_info=True)
+            notify_error("execute_buy_orders", f"[{row['market']}] 매수 주문 실패: {e}")
             continue
 
-    logging.info(f"--- 🛒 매수 주문 실행 종료 (성공여부: {all_success}) ---")
     return buy_log_df
 
 
-# --- 👇👇👇 여기가 수정된 부분입니다 (함수 정의에 setting_df 추가) 👇👇👇 ---
 def execute_sell_orders(sell_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd.DataFrame:
-    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
-    logging.info("--- 💸 매도 주문 실행 시작 ---")
-    all_success = True
+    logging.info("--- 📈 매도 주문 실행 시작 ---")
+    action_orders = sell_log_df[sell_log_df['filled'].isin(['new', 'update'])].copy()
 
-    orders_to_process = sell_log_df[sell_log_df['filled'].isin(['update', 'new'])].copy()
-    if orders_to_process.empty:
-        logging.info("실행할 신규/정정 매도 주문이 없습니다.")
-        return sell_log_df
-
-    for idx, row in orders_to_process.iterrows():
-        market = row["market"]
-        price = float(row["target_sell_price"])
-        volume_to_order = float(row["quantity"])
-        old_uuid = row.get("sell_uuid")
-
+    for idx, row in action_orders.iterrows():
         try:
-            if pd.notna(old_uuid) and isinstance(old_uuid, str) and old_uuid and old_uuid != "new":
-                logging.info(f"🔄 [{market}] 기존 매도 주문(UUID: {old_uuid}) 취소를 시도합니다.")
+            market = row['market']
+            old_uuid = row.get('sell_uuid')
+
+            if pd.notna(old_uuid) and old_uuid != "new":
                 try:
-                    cancel_order(market=market, order_uuid=str(old_uuid))
-                except Exception as cancel_e:
-                    logging.warning(f"⚠️ 기존 주문 취소 중 오류 발생 (무시하고 계속): {cancel_e}")
+                    cancel_order(market, old_uuid)
+                except (BybitInvalidRequestError, BinanceClientError) as e:
+                    if isinstance(e, BinanceClientError) and e.error_code == -2011:  # Unknown order sent.
+                        logging.warning(f"⚠️ [{market}] 이전 매도 주문 취소 불필요 (주문 ID: {old_uuid}, 이미 처리된 주문).")
+                    else:
+                        logging.warning(f"⚠️ [{market}] 이전 매도 주문 취소 실패 (이미 체결/취소되었을 수 있음): {e}")
 
-            adjusted_price = adjust_price_to_tick(market, price)
-            adjusted_quantity = adjust_quantity_to_step(market, volume_to_order)
+            price = adjust_price_to_tick(market, float(row['target_sell_price']))
+            quantity = adjust_quantity_to_step(market, float(row['quantity']))
 
-            if adjusted_quantity <= 0:
-                logging.warning(f"⚠️ [{market}] 매도 주문 수량이 0 이하로 조정되어 주문을 제출하지 않습니다.")
-                sell_log_df.at[idx, "filled"] = "error"
-                sell_log_df.at[idx, "sell_uuid"] = "ADJUSTED_TO_ZERO"
+            if quantity <= 0:
+                logging.warning(f"⚠️ [{market}] 매도 수량이 0 이하이므로 주문을 제출하지 않습니다.")
                 continue
 
-            logging.info(f"➡️ [{market}] 신규 매도 주문 제출: 가격={adjusted_price}, 수량={adjusted_quantity}")
-
-            response = send_order(
+            new_uuid = send_order(
                 market=market,
-                side='sell',
-                price=adjusted_price,
-                volume=adjusted_quantity
+                side="ask",
+                price=price,
+                quantity=quantity
             )
 
-            new_order_uuid = response.get("orderId") or response.get("uuid")
-            if new_order_uuid:
-                sell_log_df.at[idx, "sell_uuid"] = new_order_uuid
-                sell_log_df.at[idx, "filled"] = "wait"
-                logging.info(f"✅ [{market}] 매도 주문 제출 완료. 새 UUID: {new_order_uuid}, 상태: 'wait'")
-
-                market_setting = setting_df[setting_df['market'] == market].iloc[0]
-                leverage = int(market_setting['leverage'])
-                notify_order_event(
-                    "제출", market,
-                    {"type": "limit_sell", "price": adjusted_price, "quantity": adjusted_quantity,
-                     "leverage": f"{leverage}x"}
-                )
-            else:
-                raise ValueError(f"매도 주문 후 UUID를 얻지 못했습니다. 응답: {response}")
-
-        except ClientError as e:
-            if e.error_code == -2022:
-                logging.warning(f"⚠️ [{market}] 매도 주문이 거절되었습니다(코드: -2022). 이미 포지션이 종료된 것으로 보입니다. 상태를 'done'으로 처리합니다.")
-                sell_log_df.at[idx, "filled"] = "done"
-            else:
-                logging.error(f"❌ [{market}] 매도 주문 실패 (ClientError): {e}", exc_info=True)
-                all_success = False
-                continue
+            sell_log_df.loc[idx, 'sell_uuid'] = new_uuid
+            sell_log_df.loc[idx, 'filled'] = 'wait'
+            logging.info(f"✅ [{market}] 매도 주문 제출/수정 완료. 새 UUID: {new_uuid}, 상태: 'wait'")
 
         except Exception as e:
-            logging.error(f"❌ [{market}] 매도 주문 중 알 수 없는 오류 발생: {e}", exc_info=True)
-            notify_error("execute_sell_orders", f"{market} 매도 주문 실패: {e}")
-            sell_log_df.at[idx, "filled"] = "error"
-            all_success = False
+            logging.error(f"❌ [{row['market']}] 매도 주문 실패: {e}", exc_info=True)
+            notify_error("Execute Sell Order", f"[{row['market']}] 매도 주문 실패: {e}")
             continue
 
-    logging.info(f"--- 💸 매도 주문 실행 종료 (성공여부: {all_success}) ---")
     return sell_log_df

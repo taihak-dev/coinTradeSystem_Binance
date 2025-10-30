@@ -38,6 +38,7 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
 
         market_buy_log = buy_log_df[buy_log_df["market"] == market] if not buy_log_df.empty else pd.DataFrame()
 
+        # --- 1. 최초 매수 로직 (기존과 동일) ---
         if market_buy_log.empty and market not in holdings:
             buy_amount = float(setting["unit_size"])
             if usdt_balance >= buy_amount:
@@ -51,6 +52,7 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
                 logging.warning(f"⚠️ {market} 최초 매수 실패 (잔고 부족). 필요: {buy_amount:.2f}, 보유: {usdt_balance:.2f}")
             continue
 
+        # --- 2. 기준가 확인 (기존과 동일) ---
         last_small_flow_price = get_last_small_flow_or_initial_price(market_buy_log)
         last_large_flow_price = get_last_large_flow_or_initial_price(market_buy_log)
 
@@ -58,41 +60,64 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             logging.debug(f"ℹ️ {market}: 이전 체결 기록이 부족하여 추가 매수 주문을 생성하지 않습니다.")
             continue
 
-        for i in range(1, int(setting["small_flow_units"]) + 1):
-            target_price = round(last_small_flow_price * (1 - float(setting["small_flow_pct"]) * i), 8)
-            if current_price <= target_price:
-                if not market_buy_log[
-                    (market_buy_log["buy_type"] == "small_flow") & (market_buy_log["buy_units"] == i)].empty:
-                    continue
-                buy_amount = float(setting["unit_size"]) * float(setting["small_flow_units"])
+        # --- 👇👇👇 3. small_flow 로직 수정 👇👇👇 ---
+        # 1) for 루프 제거 -> '횟수' 제한 사라짐
+        # 2) target_price 계산 시 '* i' 제거 -> 단순 '연쇄' 방식 적용
+        # 3) buy_amount 계산 시 'units'를 '배율'로만 사용
+        # 4) 중복 주문 방지 로직 변경
+
+        # 'small_flow_units'를 배율로 사용
+        small_flow_multiplier = float(setting["small_flow_units"])
+        small_target_price = round(last_small_flow_price * (1 - float(setting["small_flow_pct"])), 8)
+
+        if current_price <= small_target_price:
+            # 이미 'wait' 또는 'update' 상태인 small_flow 주문이 있는지 확인
+            if not market_buy_log[
+                (market_buy_log["buy_type"] == "small_flow") &
+                (market_buy_log["filled"].isin(["wait", "update"]))
+            ].empty:
+                logging.debug(f"ℹ️ {market}: 이미 대기 중인 small_flow 주문이 있어 건너뜁니다.")
+            else:
+                # 'unit_size' * '배율'
+                buy_amount = float(setting["unit_size"]) * small_flow_multiplier
                 if usdt_balance >= buy_amount:
                     new_orders.append({
                         "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
-                        "target_price": target_price, "buy_amount": buy_amount,
-                        "buy_units": i, "buy_type": "small_flow", "filled": "update"
+                        "target_price": small_target_price, "buy_amount": buy_amount,
+                        "buy_units": 1,  # 'buy_units' 컬럼은 더 이상 단계 의미가 없으므로 1로 고정
+                        "buy_type": "small_flow", "filled": "update"
                     })
                 else:
                     logging.warning(
                         f"⚠️ {market} small_flow 매수 실패 (잔고 부족). 필요: {buy_amount:.2f}, 보유: {usdt_balance:.2f}")
-                break
 
-        for i in range(1, int(setting["large_flow_units"]) + 1):
-            target_price = round(last_large_flow_price * (1 - float(setting["large_flow_pct"]) * i), 8)
-            if current_price <= target_price:
-                if not market_buy_log[
-                    (market_buy_log["buy_type"] == "large_flow") & (market_buy_log["buy_units"] == i)].empty:
-                    continue
-                buy_amount = float(setting["unit_size"]) * float(setting["large_flow_units"])
+        # --- 👇👇👇 4. large_flow 로직 수정 (small_flow와 동일) 👇👇👇 ---
+
+        # 'large_flow_units'를 배율로 사용
+        large_flow_multiplier = float(setting["large_flow_units"])
+        large_target_price = round(last_large_flow_price * (1 - float(setting["large_flow_pct"])), 8)
+
+        if current_price <= large_target_price:
+            # 이미 'wait' 또는 'update' 상태인 large_flow 주문이 있는지 확인
+            if not market_buy_log[
+                (market_buy_log["buy_type"] == "large_flow") &
+                (market_buy_log["filled"].isin(["wait", "update"]))
+            ].empty:
+                logging.debug(f"ℹ️ {market}: 이미 대기 중인 large_flow 주문이 있어 건너뜁니다.")
+            else:
+                # 'unit_size' * '배율'
+                buy_amount = float(setting["unit_size"]) * large_flow_multiplier
                 if usdt_balance >= buy_amount:
                     new_orders.append({
                         "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
-                        "target_price": target_price, "buy_amount": buy_amount,
-                        "buy_units": i, "buy_type": "large_flow", "filled": "update"
+                        "target_price": large_target_price, "buy_amount": buy_amount,
+                        "buy_units": 1,  # 'buy_units' 컬럼은 더 이상 단계 의미가 없으므로 1로 고정
+                        "buy_type": "large_flow", "filled": "update"
                     })
                 else:
                     logging.warning(
                         f"⚠️ {market} large_flow 매수 실패 (잔고 부족). 필요: {buy_amount:.2f}, 보유: {usdt_balance:.2f}")
-                break
+        # --- 👆👆👆 수정 완료 👆👆👆 ---
 
     return pd.DataFrame(new_orders)
 

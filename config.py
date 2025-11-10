@@ -34,6 +34,11 @@ POSITION_SUMMARY_INTERVAL_SECONDS = int(os.getenv("POSITION_SUMMARY_INTERVAL_SEC
 LIQUIDATION_WARNING_PCT_1 = float(os.getenv("LIQUIDATION_WARNING_PCT_1", "0.10"))
 LIQUIDATION_WARNING_PCT_2 = float(os.getenv("LIQUIDATION_WARNING_PCT_2", "0.05"))
 
+# --- 위험 관리 설정 ---
+# .env 파일에서 MARGIN_BUFFER_FACTOR 값을 읽어옴. (숫자 타입으로 변환)
+# .env 파일에 값이 없으면 기본값으로 2.0을 사용
+MARGIN_BUFFER_FACTOR = float(os.getenv("MARGIN_BUFFER_FACTOR", "2.0"))
+
 # (참고) 기존 업비트 설정은 사용되지 않지만, 호환성을 위해 남겨둡니다.
 UPBIT_OPEN_API_ACCESS_KEY = os.getenv("UPBIT_OPEN_API_ACCESS_KEY")
 UPBIT_OPEN_API_SECRET_KEY = os.getenv("UPBIT_OPEN_API_SECRET_KEY")

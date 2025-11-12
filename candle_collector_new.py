@@ -11,9 +11,9 @@ from binance.error import ClientError
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 사용자 설정 ---
-MARKET_TO_COLLECT = "BNBUSDT"
-START_DATE_STR = "2025-11-01 00:00:00"
-END_DATE_STR = "2025-11-04 23:59:59"
+MARKET_TO_COLLECT = "SUIUSDT"
+START_DATE_STR = "2025-09-20 00:00:00"
+END_DATE_STR = "2025-11-11 23:59:59"
 
 # --- DB 설정 ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))

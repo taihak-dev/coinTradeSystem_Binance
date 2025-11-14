@@ -11,9 +11,9 @@ from binance.error import ClientError
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 사용자 설정 ---
-MARKET_TO_COLLECT = "SUIUSDT"
-START_DATE_STR = "2025-09-20 00:00:00"
-END_DATE_STR = "2025-11-11 23:59:59"
+MARKET_TO_COLLECT = "ETHUSDT"
+START_DATE_STR = "2020-01-01 00:00:00"
+END_DATE_STR = "2023-12-31 23:59:59"
 
 # --- DB 설정 ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -85,17 +85,20 @@ def collect_all_candles():
     user_start_dt_utc = datetime.strptime(START_DATE_STR, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     end_dt_utc = datetime.strptime(END_DATE_STR, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
 
-    # ✅✅✅ 핵심 수정 부분: 시작 시간 동적 설정 ✅✅✅
-    last_saved_dt = get_last_timestamp_from_db(MARKET_TO_COLLECT)
+    # --- 👇👇👇 여기가 수정된 부분입니다 👇👇👇 ---
+    # DB의 마지막 시간을 확인하는 로직을 삭제하고,
+    # 항상 사용자가 설정한 시작 시간(user_start_dt_utc)을 사용하도록 강제합니다.
     start_dt_utc = user_start_dt_utc
+    logging.info(f"ℹ️ 사용자가 설정한 시작 시간({start_dt_utc})부터 수집을 시작합니다.")
 
+    # (선택 사항) DB 마지막 시간은 참고용으로 로그만 남깁니다.
+    last_saved_dt = get_last_timestamp_from_db(MARKET_TO_COLLECT)
     if last_saved_dt:
-        logging.info(f"🔍 DB에 저장된 마지막 데이터 시점: {last_saved_dt}")
-        # DB에 저장된 시간이 사용자가 설정한 시작 시간보다 최신이면, 그 이후부터 수집
-        if last_saved_dt >= user_start_dt_utc:
-            start_dt_utc = last_saved_dt + timedelta(minutes=1)
+        logging.info(f"🔍 (참고) DB에 이미 저장된 마지막 데이터 시점: {last_saved_dt}")
+    # --- 👆👆👆 수정 완료 --- 👆👆👆
 
     if start_dt_utc >= end_dt_utc:
+        # 이 부분은 2023년(시작) >= 2023년(종료)가 아니므로 통과됩니다.
         logging.info("✅ 이미 모든 데이터가 최신 상태입니다. 수집을 종료합니다.")
         return
 

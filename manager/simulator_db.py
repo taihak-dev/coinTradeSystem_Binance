@@ -193,10 +193,7 @@ def simulate_with_db(
         # 1. 기본 정보
         final_portfolio_value = result_df['총 포트폴리오 값'].iloc[-1]
 
-        # --- 👇 6. 파라미터 사용 ---
         total_roi_pct = ((final_portfolio_value - initial_cash) / initial_cash) * 100 if initial_cash > 0 else 0
-        # --- 👆 6. ---
-
         final_realized_pnl = result_df['실현 손익'].iloc[-1]
 
         # 2. 최장 보유 시간
@@ -206,10 +203,24 @@ def simulate_with_db(
         # 3. 최다 보유 유닛
         max_units = result_df['현재 유닛'].max()
 
-        # 4. 최대 낙폭 (MDD)
+        # 4. 최대 낙폭(MDD) 계산
         peak = result_df['총 포트폴리오 값'].cummax()
         drawdown = (result_df['총 포트폴리오 값'] - peak) / peak
         max_drawdown_pct = drawdown.min() * 100
+
+        try:
+            mdd_end_index = drawdown.idxmin()
+            mdd_trough_value = result_df.loc[mdd_end_index, '총 포트폴리오 값']  # <--- '최저점' 값
+            mdd_peak_value = peak.loc[mdd_end_index]
+            mdd_detail_str = f" (Peak {mdd_peak_value:,.2f} USDT -> Trough {mdd_trough_value:,.2f} USDT)"
+        except Exception:
+            mdd_trough_value = 0  # 예외 발생 시 기본값
+            mdd_detail_str = ""
+
+        # --- 👇👇👇 1. 청산 발생 여부 확인 로직 추가 👇👇👇 ---
+        # (총 자산 최저점이 0 이하로 내려갔는지 확인)
+        liquidation_occurred = "🚨 예 (총 자산 0 이하 도달)" if mdd_trough_value <= 0 else "✅ 아니오"
+        # --- 👆👆👆 1. 수정 완료 --- 👆👆👆
 
         # --- 요약 출력 ---
         print("\n" + "=" * 50)
@@ -217,11 +228,7 @@ def simulate_with_db(
         print("=" * 50)
         print(f"  - 마켓 (Market):       {market}")
         print(f"  - 기간 (Period):       {start} ~ {end}")
-
-        # --- 👇 7. 파라미터 사용 ---
         print(f"  - 초기 자본 (Initial): {initial_cash:,.2f} USDT")
-        # --- 👆 7. ---
-
         print("." * 50)
         print("  --- 💰 수익성 (Profitability) ---")
         print(f"  - 최종 포트폴리오 가치:   {final_portfolio_value:,.2f} USDT")
@@ -230,7 +237,12 @@ def simulate_with_db(
         print(f"  - 총 거래 횟수 (매도):   {total_sell_trades} 회")
         print("." * 50)
         print("  --- 📊 안정성 (Stability & Stats) ---")
-        print(f"  - 최대 낙폭 (MDD):      {max_drawdown_pct:,.2f} %")
+
+        # --- 👇👇👇 2. 청산 여부 출력 라인 추가 👇👇👇 ---
+        print(f"  - 청산 발생 여부:      {liquidation_occurred}")
+        # --- 👆👆👆 2. 수정 완료 --- 👆👆👆
+
+        print(f"  - 최대 낙폭 (MDD):      {max_drawdown_pct:,.2f} %{mdd_detail_str}")
         print(f"  - 최장기간 보유:         {max_duration_str}")
         print(f"  - 최다보유 유닛:         {max_units:,.2f} units")
         print(f"  - 총 누적 수수료:        {result_df['총 누적 수수료'].iloc[-1]:,.2f} USDT")

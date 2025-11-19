@@ -8,9 +8,9 @@ simulate_with_db(
     buy_fee=0.0005,        # (예시) 매수 수수료
     sell_fee=0.0005,       # (예시) 매도 수수료
 
-    market="XRPUSDT",
-    start="2024-01-01 00:00:00",
-    end="2025-11-04 23:59:59",
+    market="BTCUSDT",
+    start="2020-01-01 00:00:00",
+    end="2025-11-11 23:59:59",
 
     unit_size=100,
     small_flow_pct=0.04,

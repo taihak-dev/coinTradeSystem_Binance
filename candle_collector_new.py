@@ -11,9 +11,9 @@ from binance.error import ClientError
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 사용자 설정 ---
-MARKET_TO_COLLECT = "ETHUSDT"
-START_DATE_STR = "2020-01-01 00:00:00"
-END_DATE_STR = "2023-12-31 23:59:59"
+MARKET_TO_COLLECT = "XRPUSDT"
+START_DATE_STR = "2025-11-01 00:00:00"
+END_DATE_STR = "2025-11-18 23:59:59"
 
 # --- DB 설정 ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -59,7 +59,6 @@ def save_candles_to_db(candles_df: pd.DataFrame):
         return insert_count
 
 
-# ✅✅✅ 새로 추가된 함수 ✅✅✅
 def get_last_timestamp_from_db(market: str) -> datetime | None:
     """DB에서 특정 마켓의 가장 마지막 타임스탬프를 조회"""
     if not os.path.exists(DB_PATH):
@@ -98,7 +97,6 @@ def collect_all_candles():
     # --- 👆👆👆 수정 완료 --- 👆👆👆
 
     if start_dt_utc >= end_dt_utc:
-        # 이 부분은 2023년(시작) >= 2023년(종료)가 아니므로 통과됩니다.
         logging.info("✅ 이미 모든 데이터가 최신 상태입니다. 수집을 종료합니다.")
         return
 
@@ -140,21 +138,29 @@ def collect_all_candles():
             ])
 
             df['market'] = MARKET_TO_COLLECT
-            df['timestamp'] = pd.to_datetime(df['open_time'], unit='ms', utc=True).dt.strftime('%Y-%m-%d %H:%M:%S')
 
-            df_to_save = df[['market', 'timestamp', 'open', 'high', 'low', 'close', 'volume']].copy()
+            # --- 👇👇👇 여기가 수정된 부분입니다 👇👇👇 ---
+            # 1. '날짜 객체' 컬럼을 먼저 만듭니다.
+            df['dt_timestamp'] = pd.to_datetime(df['open_time'], unit='ms', utc=True)
 
-            df_to_save['dt_for_filtering'] = pd.to_datetime(df_to_save['timestamp'], utc=True)
-            df_to_save = df_to_save[df_to_save['dt_for_filtering'] <= end_dt_utc]
-            df_to_save = df_to_save.drop(columns=['dt_for_filtering'])
+            # 2. '날짜 객체'로 즉시 필터링합니다. (경고가 발생하던 이중 변환을 제거)
+            df_filtered = df[df['dt_timestamp'] <= end_dt_utc].copy()
 
-            if df_to_save.empty:
+            if df_filtered.empty:
                 logging.info("남은 캔들이 모두 수집 기간 이후의 데이터이므로 수집을 종료합니다.")
                 break
+
+            # 3. DB에 저장할 '텍스트' 컬럼을 *필터링이 끝난 후에* 만듭니다.
+            df_filtered['timestamp'] = df_filtered['dt_timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+            # 4. 최종 저장할 데이터프레임을 선택합니다.
+            df_to_save = df_filtered[['market', 'timestamp', 'open', 'high', 'low', 'close', 'volume']]
+            # --- 👆👆👆 수정 완료 --- 👆👆👆
 
             saved_count = save_candles_to_db(df_to_save)
             total_saved_count += saved_count
 
+            # 'df' (필터링 전 원본)의 마지막 시간을 기준으로 다음 루프를 결정합니다.
             last_open_time_ms = df.iloc[-1]['open_time']
             current_dt = datetime.fromtimestamp(last_open_time_ms / 1000, tz=timezone.utc) + timedelta(minutes=1)
 

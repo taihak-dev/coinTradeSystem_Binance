@@ -21,8 +21,6 @@ elif config.EXCHANGE == 'bybit':
 else:
     raise ValueError(f"지원하지 않는 거래소입니다: {config.EXCHANGE}")
 
-# common_utils의 get_current_holdings 대신 get_accounts를 직접 사용하므로 아래 라인은 주석 처리하거나 삭제합니다.
-# from utils.common_utils import get_current_holdings
 from manager.order_executor import execute_buy_orders
 from strategy.casino_strategy import generate_buy_orders
 
@@ -60,7 +58,7 @@ def update_buy_log_status(buy_log_df: pd.DataFrame) -> pd.DataFrame:
     return buy_log_df
 
 
-def run_buy_entry_flow():
+def run_buy_entry_flow(current_unit_size: float):
     try:
         setting_df = pd.read_csv("setting.csv")
         buy_log_df = pd.read_csv("buy_log.csv") if os.path.exists("buy_log.csv") else pd.DataFrame()
@@ -71,26 +69,22 @@ def run_buy_entry_flow():
     if not buy_log_df.empty:
         buy_log_df = update_buy_log_status(buy_log_df)
 
-    # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
     try:
-        # 1. 계좌의 모든 정보를 직접 가져옵니다.
         account_data = get_accounts()
         usdt_balance = account_data.get("usdt_balance", 0.0)
         open_positions = account_data.get("open_positions", [])
 
-        # 2. 보유 코인 정보(holdings)를 직접 가공합니다.
         holdings = {}
         for pos in open_positions:
             market = pos['symbol']
             balance = abs(float(pos.get('positionAmt', 0)))
             avg_price = float(pos.get('entryPrice', 0))
-            if balance * avg_price > 5:  # 5 USDT 미만은 무시
+            if balance * avg_price > 5:
                 holdings[market] = {"balance": balance, "avg_price": avg_price}
 
     except Exception as e:
         print(f"❌ 보유 자산 및 잔고 정보 조회 실패: {e}")
         return
-    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
 
     markets_to_check = setting_df['market'].unique()
     current_prices = {}
@@ -101,9 +95,10 @@ def run_buy_entry_flow():
             print(f"❌ {market} 현재가 조회 실패: {e}")
             current_prices[market] = None
 
-    # --- 👇👇👇 여기가 핵심 수정 부분입니다 (usdt_balance 전달) 👇👇👇 ---
+    # setting_df에 동적으로 계산된 unit_size를 업데이트
+    setting_df['unit_size'] = current_unit_size
+
     new_orders_df = generate_buy_orders(setting_df, buy_log_df, current_prices, holdings, usdt_balance)
-    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
 
     if not new_orders_df.empty:
         print(f"[buy_entry.py] 신규 매수 주문 {len(new_orders_df)}건 생성됨. 주문 실행을 시작합니다.")

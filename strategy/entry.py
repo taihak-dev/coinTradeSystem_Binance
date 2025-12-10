@@ -50,7 +50,7 @@ def send_periodic_summary():
             notify_error("Periodic Summary", f"주기적 상태 보고 실패: {e}")
 
 
-def run_casino_entry():
+def run_casino_entry(current_unit_size: float):
     """
     매매 로직의 전체 사이클을 실행하고, 오류 발생 시에도 메인 루프가 중단되지 않도록 처리합니다.
     """
@@ -59,7 +59,7 @@ def run_casino_entry():
     try:
         # 1. 매수 전략 실행
         print("[entry.py] ▶ 매수 전략 실행")
-        run_buy_entry_flow()
+        run_buy_entry_flow(current_unit_size=current_unit_size)
 
         # 2. 매도 전략 실행
         print("[entry.py] ▶ 매도 전략 실행")

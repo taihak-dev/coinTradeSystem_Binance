@@ -38,7 +38,7 @@ last_summary_time = 0
 last_liquidation_warning_times = {}
 
 
-def check_and_notify_status():
+def check_and_notify_status(account_data: dict): # account_data를 인자로 받도록 수정
     """주기적으로 봇 상태, 계좌 요약, 청산 위험을 체크하고 알림을 보냅니다."""
     global last_health_check_time, last_summary_time, last_liquidation_warning_times
     current_time = time.time()
@@ -48,9 +48,6 @@ def check_and_notify_status():
         if current_time - last_health_check_time >= config.HEALTH_CHECK_INTERVAL_SECONDS:
             notify_bot_status("정상 동작 중", f"거래소: {config.EXCHANGE.upper()}")
             last_health_check_time = current_time
-
-        # get_accounts 함수는 이제 설정에 따라 바이낸스 또는 바이빗의 함수가 됩니다.
-        account_data = get_accounts()
 
         # 2. 포지션 현황 요약 (예: 6시간마다)
         if current_time - last_summary_time >= config.POSITION_SUMMARY_INTERVAL_SECONDS:
@@ -103,13 +100,31 @@ def main():
             logging.info(f"== {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - 메인 루프 시작 ==")
             logging.info("=" * 50)
 
-            # 주기적인 상태 확인 및 알림
-            check_and_notify_status()
+            # 1. 계좌 정보 조회 (API 호출 최소화를 위해 루프 시작 시 한 번만 호출)
+            account_data = get_accounts()
+            total_equity = account_data.get('total_equity', 0)
+            
+            # 2. 주기적인 상태 확인 및 알림 (조회한 계좌 정보 전달)
+            check_and_notify_status(account_data)
 
-            # 매매 전략 실행
-            run_casino_entry()
+            # 3. 동적 유닛 사이즈 계산
+            # setting.csv는 모든 마켓에 대한 설정을 담고 있으므로, 첫 번째 행의 unit_size를 기준으로 사용
+            try:
+                setting_df = pd.read_csv('setting.csv')
+                base_unit_size = setting_df['unit_size'].iloc[0]
+            except Exception as e:
+                logging.error(f"setting.csv 파일에서 unit_size를 읽는 중 오류 발생: {e}. 기본값 100을 사용합니다.")
+                base_unit_size = 100
 
-            # 다음 실행까지 대기
+            current_unit_size = base_unit_size
+            if total_equity > config.ORIGINAL_INITIAL_CASH:
+                current_unit_size = base_unit_size * (total_equity / config.ORIGINAL_INITIAL_CASH)
+                logging.info(f"자산 증가로 동적 유닛 사이즈 적용: {current_unit_size:.2f} (기본: {base_unit_size})")
+            
+            # 4. 매매 전략 실행 (계산된 유닛 사이즈 전달)
+            run_casino_entry(current_unit_size=current_unit_size)
+
+            # 5. 다음 실행까지 대기
             logging.info(f"== 메인 루프 종료. {config.RUN_INTERVAL_SECONDS}초 후 다음 루프 시작 ==")
             time.sleep(config.RUN_INTERVAL_SECONDS)
 

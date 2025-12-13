@@ -37,41 +37,46 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             logging.warning(f"⚠️ {market}의 현재 가격 정보가 없어 매수 주문 생성을 건너뜁니다.")
             continue
 
-        # --- 👇 1. 레버리지 값 불러오기 (config에서 버퍼 값 사용 준비) 👇 ---
         try:
             leverage = float(setting["leverage"])
-            if leverage <= 0: leverage = 1.0  # 레버리지가 0 이하면 1로 강제
+            if leverage <= 0: leverage = 1.0
         except (KeyError, TypeError, ValueError):
             logging.warning(f"⚠️ {market}의 레버리지 설정이 없거나 잘못되었습니다. [1.0]배로 간주합니다.")
-            leverage = 1.0  # 설정에 문제가 있으면 1배로 간주
-        # --- 👆 1. 수정 완료 👆 ---
+            leverage = 1.0
 
         market_buy_log = buy_log_df[buy_log_df["market"] == market] if not buy_log_df.empty else pd.DataFrame()
 
-        # --- 2. 최초 매수 로직 (안전장치 수정) ---
+        # --- 최초 매수 로직 ---
         if market_buy_log.empty and market not in holdings:
             buy_amount = float(setting["unit_size"])
-
-            # --- 👇 2. 레버리지 인지 안전장치로 변경 👇 ---
-            # (기존) if usdt_balance >= buy_amount:
             required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
 
             if usdt_balance >= required_margin:
-            # --- 👆 2. 수정 완료 👆 ---
-                logging.info(f"🆕 {market}: 최초 매수 주문 생성을 시도합니다.")
+                logging.info(f"🆕 {market}: 최초 매수 주문 생성을 시도합니다. (Unit Size: {buy_amount:.2f})")
                 new_orders.append({
                     "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                     "target_price": current_price, "buy_amount": buy_amount,
-                    "buy_units": 0, "buy_type": "initial", "filled": "update"
+                    "buy_units": 0, "buy_type": "initial", "filled": "update",
+                    "base_unit_size": buy_amount  # 최초 진입 시의 unit_size 기록
                 })
             else:
-                # --- 👇 2-1. 경고 로그 수정 👇 ---
                 logging.warning(
                     f"⚠️ {market} 최초 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
-                # --- 👆 2-1. 수정 완료 👆 ---
             continue
 
-        # --- 3. 기준가 확인 (기존과 동일) ---
+        # --- 물타기 기준 unit_size 조회 ---
+        base_unit_size_for_flow = None
+        if not market_buy_log.empty:
+            initial_buys = market_buy_log[market_buy_log['buy_type'] == 'initial']
+            if not initial_buys.empty:
+                # 가장 최근 initial 주문에 기록된 base_unit_size를 사용
+                base_unit_size_for_flow = initial_buys.iloc[-1].get('base_unit_size')
+
+        # 만약 기록이 없다면 (오래된 buy_log 호환), 현재 설정의 unit_size를 안전하게 사용
+        if pd.isna(base_unit_size_for_flow):
+            base_unit_size_for_flow = float(setting["unit_size"])
+
+        # --- 기준가 확인 ---
         last_small_flow_price = get_last_small_flow_or_initial_price(market_buy_log)
         last_large_flow_price = get_last_large_flow_or_initial_price(market_buy_log)
 
@@ -79,7 +84,7 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             logging.debug(f"ℹ️ {market}: 이전 체결 기록이 부족하여 추가 매수 주문을 생성하지 않습니다.")
             continue
 
-        # --- 4. small_flow 로직 (안전장치 수정) ---
+        # --- small_flow 로직 ---
         small_flow_multiplier = float(setting["small_flow_units"])
         small_target_price = round(last_small_flow_price * (1 - float(setting["small_flow_pct"])), 8)
 
@@ -90,27 +95,21 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             ].empty:
                 logging.debug(f"ℹ️ {market}: 이미 대기 중인 small_flow 주문이 있어 건너뜁니다.")
             else:
-                buy_amount = float(setting["unit_size"]) * small_flow_multiplier
-
-                # --- 👇 3. 레버리지 인지 안전장치로 변경 👇 ---
-                # (기존) if usdt_balance >= buy_amount:
+                buy_amount = base_unit_size_for_flow * small_flow_multiplier # 고정된 unit_size 사용
                 required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
 
                 if usdt_balance >= required_margin:
-                # --- 👆 3. 수정 완료 👆 ---
                     new_orders.append({
                         "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                         "target_price": small_target_price, "buy_amount": buy_amount,
-                        "buy_units": 1,  # 'buy_units' 컬럼은 더 이상 단계 의미가 없으므로 1로 고정
-                        "buy_type": "small_flow", "filled": "update"
+                        "buy_units": 1, "buy_type": "small_flow", "filled": "update",
+                        "base_unit_size": np.nan # 물타기 주문에는 기록하지 않음
                     })
                 else:
-                    # --- 👇 3-1. 경고 로그 수정 👇 ---
                     logging.warning(
                         f"⚠️ {market} small_flow 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
-                    # --- 👆 3-1. 수정 완료 👆 ---
 
-        # --- 5. large_flow 로직 (안전장치 수정) ---
+        # --- large_flow 로직 ---
         large_flow_multiplier = float(setting["large_flow_units"])
         large_target_price = round(last_large_flow_price * (1 - float(setting["large_flow_pct"])), 8)
 
@@ -121,25 +120,19 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             ].empty:
                 logging.debug(f"ℹ️ {market}: 이미 대기 중인 large_flow 주문이 있어 건너뜁니다.")
             else:
-                buy_amount = float(setting["unit_size"]) * large_flow_multiplier
-
-                # --- 👇 4. 레버리지 인지 안전장치로 변경 👇 ---
-                # (기존) if usdt_balance >= buy_amount:
+                buy_amount = base_unit_size_for_flow * large_flow_multiplier # 고정된 unit_size 사용
                 required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
 
                 if usdt_balance >= required_margin:
-                # --- 👆 4. 수정 완료 👆 ---
                     new_orders.append({
                         "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                         "target_price": large_target_price, "buy_amount": buy_amount,
-                        "buy_units": 1,  # 'buy_units' 컬럼은 더 이상 단계 의미가 없으므로 1로 고정
-                        "buy_type": "large_flow", "filled": "update"
+                        "buy_units": 1, "buy_type": "large_flow", "filled": "update",
+                        "base_unit_size": np.nan # 물타기 주문에는 기록하지 않음
                     })
                 else:
-                    # --- 👇 4-1. 경고 로그 수정 👇 ---
                     logging.warning(
                         f"⚠️ {market} large_flow 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
-                    # --- 👆 4-1. 수정 완료 👆 ---
 
     return pd.DataFrame(new_orders)
 
@@ -174,7 +167,4 @@ def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: 
         }
         orders_to_action.append(new_order)
 
-    # --- 👇👇👇 여기가 핵심 수정 부분입니다 👇👇👇 ---
-    # if orders_to_action:  <-- 이 불필요한 조건문을 제거합니다.
-    return pd.DataFrame(orders_to_action)  # 주문 목록이 비어있더라도 항상 DataFrame을 반환합니다.
-    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
+    return pd.DataFrame(orders_to_action)

@@ -102,13 +102,11 @@ def main():
 
             # 1. 계좌 정보 조회 (API 호출 최소화를 위해 루프 시작 시 한 번만 호출)
             account_data = get_accounts()
-            total_equity = account_data.get('total_equity', 0)
             
             # 2. 주기적인 상태 확인 및 알림 (조회한 계좌 정보 전달)
             check_and_notify_status(account_data)
 
             # 3. 동적 유닛 사이즈 계산
-            # setting.csv는 모든 마켓에 대한 설정을 담고 있으므로, 첫 번째 행의 unit_size를 기준으로 사용
             try:
                 setting_df = pd.read_csv('setting.csv')
                 base_unit_size = setting_df['unit_size'].iloc[0]
@@ -117,9 +115,18 @@ def main():
                 base_unit_size = 100
 
             current_unit_size = base_unit_size
-            if total_equity > config.ORIGINAL_INITIAL_CASH:
-                current_unit_size = base_unit_size * (total_equity / config.ORIGINAL_INITIAL_CASH)
-                logging.info(f"자산 증가로 동적 유닛 사이즈 적용: {current_unit_size:.2f} (기본: {base_unit_size})")
+            
+            # --- 👇👇👇 동적 유닛 사이즈 로직 조건부 실행 👇👇👇 ---
+            if config.ENABLE_DYNAMIC_UNIT:
+                total_equity = account_data.get('total_equity', 0)
+                if total_equity > config.ORIGINAL_INITIAL_CASH:
+                    current_unit_size = base_unit_size * (total_equity / config.ORIGINAL_INITIAL_CASH)
+                    logging.info(f"📈 동적 유닛 활성화: 자산 증가로 유닛 사이즈 상향 조정: {current_unit_size:.2f} (기본: {base_unit_size})")
+                else:
+                    logging.info(f"📉 동적 유닛 활성화: 자산이 기준보다 작으므로 기본 유닛 사이즈 유지: {current_unit_size:.2f}")
+            else:
+                logging.info(f"🛠️ 동적 유닛 비활성화: 고정 유닛 사이즈 사용: {current_unit_size:.2f}")
+            # --- 👆👆👆 수정 완료 --- 👆👆👆
             
             # 4. 매매 전략 실행 (계산된 유닛 사이즈 전달)
             run_casino_entry(current_unit_size=current_unit_size)

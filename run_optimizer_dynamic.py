@@ -15,31 +15,31 @@ param_grid = {
     # 기존 파라미터들...
     # 'leverage': [5, 10],
     # 'small_flow_units': [2, 3],
-    # 'large_flow_units': [10, 12, 15],
+    # 'large_flow_units': [10, 14],
     # 'small_flow_pct': [0.04, 0.05, 0.06],
-    # 'large_flow_pct': [0.13, 0.17, 0.20],
+    # 'large_flow_pct': [0.17, 0.20],
     # 'take_profit_pct': [0.005, 0.01],
 }
 
 # --- 2. 백테스트 기본 설정 ---
 base_settings = {
-    "enable_dynamic_unit": True,  # 동적 유닛 활성화
+    "enable_dynamic_unit": False,  # 동적 유닛 활성화
     "save_full_log": False,
-    "liquidation_safety_factor": 1.3,
+    "liquidation_safety_factor": 1.5,
     "profit_reset_pct": 1.0,
     "initial_cash": 3_000.0,
     "buy_fee": 0.0004,
     "sell_fee": 0.0004,
     "maintenance_margin_rate": 0.005,
     "slippage_pct": 0.0005,
-    "market": "BTCUSDT",
+    "market": "ETHUSDT",
     "start": "2020-01-01 00:00:00",
     "end": "2025-12-04 23:59:59",
     "unit_size": 150,
     "small_flow_units": 2,
     "large_flow_units": 10,
     'small_flow_pct': 0.04,
-    'large_flow_pct': 0.15,
+    'large_flow_pct': 0.17,
     'take_profit_pct': 0.005,
     "leverage": 5,
 }

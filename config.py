@@ -43,6 +43,7 @@ MARGIN_BUFFER_FACTOR = float(os.getenv("MARGIN_BUFFER_FACTOR", "2.0"))
 # .env 파일에서 기준 시드머니 값을 읽어옴. (숫자 타입으로 변환)
 # .env 파일에 값이 없으면 기본값으로 5000.0을 사용
 ORIGINAL_INITIAL_CASH = float(os.getenv("ORIGINAL_INITIAL_CASH", "5000.0"))
+ENABLE_DYNAMIC_UNIT = os.getenv("ENABLE_DYNAMIC_UNIT", "False").lower() in ('true', '1', 't')
 # --- 👆👆👆 추가 완료 --- 👆👆👆
 
 # (참고) 기존 업비트 설정은 사용되지 않지만, 호환성을 위해 남겨둡니다.

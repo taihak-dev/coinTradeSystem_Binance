@@ -3,7 +3,7 @@
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
-from strategy.casino_strategy import generate_buy_orders, generate_sell_orders
+from strategy.casino_strategy_rebalance import generate_buy_orders, generate_sell_orders
 import os
 import logging
 import numpy as np
@@ -97,8 +97,7 @@ def _generate_segment_summary(
     print(f"  - 최다보유 유닛:         {max_units:,.2f} units")
 
 
-# --- 🚀 V2 선물 백테스팅 엔진 (OHLC + Slippage) 🚀 ---
-def simulate_futures_dynamic( # 함수 이름 변경
+def simulate_futures_dynamic(
         market: str, start: str, end: str, unit_size: float,
         small_flow_pct: float, small_flow_units: int,
         large_flow_pct: float, large_flow_units: int,
@@ -111,19 +110,19 @@ def simulate_futures_dynamic( # 함수 이름 변경
         maintenance_margin_rate: float = 0.005,
         slippage_pct: float = 0.0005,
         liquidation_safety_factor: float = 1.0,
-        # --- 👇👇👇 동적 유닛 관련 파라미터 추가 👇👇👇 ---
         enable_dynamic_unit: bool = False,
-        profit_reset_pct: float = 0.0 # 0% 수익 시 리셋 (기본값: 비활성화)
-        # --- 👆👆👆 추가 완료 --- 👆👆👆
+        profit_reset_pct: float = 0.0,
+        enable_rebalance: bool = False,
+        initial_entry_units: float = 1.0  # 파라미터 추가
 ):
     logging.info(f"--- ⏱️ V2 선물(OHLC) 백테스트 시작: {market}, 기간: {start} ~ {end} ---")
     logging.info(f"--- 레버리지: {leverage}x, 초기 자본: {initial_cash:,.2f} USDT, 슬리피지: {slippage_pct * 100:.3f}%, 청산 안전 계수: {liquidation_safety_factor} ---")
-    # --- 👇👇👇 동적 유닛/리셋 설정 로그 추가 👇👇👇 ---
     if enable_dynamic_unit:
         logging.info(f"--- 📈 동적 유닛 활성화. 수익 {profit_reset_pct * 100:.0f}% 달성 시 자본 리셋 ---")
     else:
         logging.info("--- 📉 동적 유닛 비활성화. 고정 유닛 사용 ---")
-    # --- 👆👆👆 추가 완료 --- 👆👆👆
+    if enable_rebalance:
+        logging.info("--- 🔄 기준점 리밸런싱 활성화 ---")
 
     df_candles = load_candles_from_db(market, start, end)
     if df_candles.empty:
@@ -134,12 +133,12 @@ def simulate_futures_dynamic( # 함수 이름 변경
             'Profit Factor': 0, 'Return/MDD': 0, 'Reset Count': 0
         }
 
-    # setting_df는 이제 동적 유닛 계산을 위해 매번 업데이트될 수 있으므로, 초기값만 설정
     initial_setting_df_values = {
         "market": market, "unit_size": unit_size, "small_flow_pct": small_flow_pct,
         "small_flow_units": small_flow_units, "large_flow_pct": large_flow_pct,
         "large_flow_units": large_flow_units, "take_profit_pct": take_profit_pct,
-        "leverage": leverage
+        "leverage": leverage,
+        "initial_entry_units": initial_entry_units  # 전달할 딕셔너리에 추가
     }
 
     master_report_segments = []
@@ -153,31 +152,34 @@ def simulate_futures_dynamic( # 함수 이름 변경
     total_equity = initial_cash
     available_margin = initial_cash
     position = {}
-    buy_log_df = pd.DataFrame(
-        columns=["time", "market", "target_price", "buy_amount", "buy_units", "buy_type", "filled"])
+    buy_log_df = pd.DataFrame(columns=["time", "market", "target_price", "buy_amount", "buy_units", "buy_type", "filled", "base_unit_size"])
     current_holding_minutes = 0
     current_units_held = 0.0
     
-    # --- 👇👇👇 동적 유닛/리셋 관련 변수 추가 👇👇👇 ---
-    accumulated_profit = 0.0 # 리셋된 수익을 누적할 변수
-    original_initial_cash = initial_cash # 초기 자본을 기억 (리셋 시 사용)
-    reset_count = 0 # 리셋 횟수 변수 추가
-    # --- 👆👆👆 추가 완료 --- 👆👆👆
+    accumulated_profit = 0.0
+    original_initial_cash = initial_cash
+    reset_count = 0
+    high_water_marks = {}
 
     for i, row in df_candles.iterrows():
         price_open, price_high, price_low, price_close, now = row["시가"], row["고가"], row["저가"], row["종가"], row["시간"]
         events, last_trade_amount, last_trade_fee = [], 0.0, 0.0
 
-        # --- 👇👇👇 동적 유닛 계산 👇👇👇 ---
+        if market in position:
+            if market not in high_water_marks:
+                high_water_marks[market] = price_high
+            else:
+                high_water_marks[market] = max(high_water_marks[market], price_high)
+        else:
+            high_water_marks[market] = 0
+
         current_unit_size = unit_size
         if enable_dynamic_unit and total_equity > original_initial_cash:
             current_unit_size = unit_size * (total_equity / original_initial_cash)
         
-        # setting_df 업데이트 (generate_buy_orders에 전달)
         current_setting_df_values = initial_setting_df_values.copy()
         current_setting_df_values["unit_size"] = current_unit_size
         setting_df = pd.DataFrame([current_setting_df_values])
-        # --- 👆👆👆 동적 유닛 계산 완료 👆👆👆
 
         if market in position:
             pos_data = position[market]
@@ -188,9 +190,7 @@ def simulate_futures_dynamic( # 함수 이름 변경
                 events.append("!!! 강제 청산 !!!")
                 if segment_logs:
                     result_df_segment = pd.DataFrame(segment_logs)
-                    master_report_segments.append(
-                        (result_df_segment, segment_start_dt, now, initial_cash, True)
-                    )
+                    master_report_segments.append((result_df_segment, segment_start_dt, now, initial_cash, True))
                 liquidation_events.append(now)
                 realized_pnl, unrealized_pnl, used_margin = 0.0, 0.0, 0.0
                 total_equity, available_margin = initial_cash, initial_cash
@@ -199,6 +199,7 @@ def simulate_futures_dynamic( # 함수 이름 변경
                 current_holding_minutes, current_units_held = 0, 0.0
                 segment_logs = []
                 segment_start_dt = now + timedelta(minutes=1)
+                high_water_marks[market] = 0
                 continue
 
         if market in position:
@@ -220,11 +221,10 @@ def simulate_futures_dynamic( # 함수 이름 변경
                 last_trade_amount, last_trade_fee = proceeds, fee
                 events.append("매도 체결")
                 logging.info(f"🧹 {market} 매도 완료. (실현 손익: {profit:,.2f} USDT)")
-                # continue # 매도 후 즉시 continue 제거 -> 같은 캔들에서 매수도 가능하도록
+                high_water_marks[market] = 0
 
-        sim_holdings = {market: {"balance": position.get(market, {}).get('quantity', 0),
-                                 "avg_price": position.get(market, {}).get('avg_price', 0)}} if market in position else {}
-        new_buy_orders_df = generate_buy_orders(setting_df, buy_log_df, {market: price_low}, sim_holdings, available_margin)
+        sim_holdings = {market: {"balance": position.get(market, {}).get('quantity', 0), "avg_price": position.get(market, {}).get('avg_price', 0)}} if market in position else {}
+        new_buy_orders_df = generate_buy_orders(setting_df, buy_log_df, {market: price_low}, sim_holdings, available_margin, enable_rebalance=enable_rebalance, high_water_marks=high_water_marks)
         if not new_buy_orders_df.empty:
             buy_log_df = pd.concat([buy_log_df, new_buy_orders_df], ignore_index=True)
 
@@ -252,6 +252,7 @@ def simulate_futures_dynamic( # 함수 이름 변경
                 buy_log_df.at[idx, "filled"] = "done"
                 last_trade_amount, last_trade_fee = amount_to_buy, fee
                 events.append(f"{buy_type} 매수")
+                high_water_marks[market] = final_price
 
         if market in position:
             current_holding_minutes += 1
@@ -271,7 +272,6 @@ def simulate_futures_dynamic( # 함수 이름 변경
             "연속 보유(분)": current_holding_minutes
         })
 
-        # --- 👇👇👇 수익 실현 및 리셋 로직 수정 👇👇👇 ---
         if enable_dynamic_unit and profit_reset_pct > 0 and total_equity >= original_initial_cash * (1 + profit_reset_pct):
             events.append("💰 수익 실현 및 계좌 리셋!")
             
@@ -282,49 +282,43 @@ def simulate_futures_dynamic( # 함수 이름 변경
                 used_margin = 0.0
                 unrealized_pnl = 0.0
                 buy_log_df = pd.DataFrame(columns=buy_log_df.columns)
+                high_water_marks[market] = 0
             
             accumulated_profit += (total_equity - original_initial_cash)
             
-            # 계좌 초기화 (realized_pnl 초기화 추가)
             total_equity = original_initial_cash
             available_margin = original_initial_cash
             initial_cash = original_initial_cash
-            realized_pnl = 0.0 # "유령 이익" 버그 수정
+            realized_pnl = 0.0
             reset_count += 1
             
             logging.info(f"💰 수익 실현 및 계좌 리셋! (누적 수익: {accumulated_profit:,.2f} USDT, 현재 자본: {total_equity:,.2f} USDT, 리셋 횟수: {reset_count})")
             
             if segment_logs:
                 result_df_segment = pd.DataFrame(segment_logs)
-                master_report_segments.append(
-                    (result_df_segment, segment_start_dt, now, initial_cash, False)
-                )
+                master_report_segments.append((result_df_segment, segment_start_dt, now, initial_cash, False))
             segment_logs = []
             segment_start_dt = now + timedelta(minutes=1)
-            continue # 현실성을 위해 리셋 후 즉시 다음 캔들로 이동
-        # --- 👆👆👆 수정 완료 --- 👆👆👆
+            continue
 
     if segment_logs:
         result_df_segment = pd.DataFrame(segment_logs)
         segment_end_dt = df_candles.iloc[-1]["시간"]
-        master_report_segments.append(
-            (result_df_segment, segment_start_dt, segment_end_dt, initial_cash, False)
-        )
+        master_report_segments.append((result_df_segment, segment_start_dt, segment_end_dt, initial_cash, False))
 
-    # --- 최종 리포트 ---
     print("\n" + "=" * 50)
     print("     📊 선물(Futures) 백테스트 마스터 요약 📊     ")
     print("=" * 50)
     print(f"  - 마켓 (Market):       {market} (Leverage: {leverage}x)")
     print(f"  - 전체 기간:         {start} ~ {end}")
-    print(f"  - 초기 자본 (Initial): {original_initial_cash:,.2f} USDT") # 원본 초기 자본 출력
+    print(f"  - 초기 자본 (Initial): {original_initial_cash:,.2f} USDT")
     print("-" * 50)
-    # --- 👇👇👇 설정 정보 출력 추가 👇👇👇 ---
     print("  --- ⚙️ 백테스트 설정 (Settings) ⚙️ ---")
     print(f"  - 전략 (Strategy):")
-    print(f"    - unit_size: {unit_size}, take_profit_pct: {take_profit_pct}")
+    print(f"    - unit_size: {unit_size}, take_profit_pct: {take_profit_pct}, initial_entry_units: {initial_entry_units}")
     print(f"    - small_flow: {small_flow_pct * 100:.2f}% (x{small_flow_units})")
     print(f"    - large_flow: {large_flow_pct * 100:.2f}% (x{large_flow_units})")
+    print(f"    - enable_rebalance: {enable_rebalance}")
     print(f"  - 수수료 및 슬리피지 (Fees & Slippage):")
     print(f"    - buy_fee: {buy_fee}, sell_fee: {sell_fee}, slippage_pct: {slippage_pct}")
     print(f"  - 리스크 관리 (Risk Management):")
@@ -334,7 +328,6 @@ def simulate_futures_dynamic( # 함수 이름 변경
     print(f"    - enable_dynamic_unit: {enable_dynamic_unit}")
     print(f"    - profit_reset_pct: {profit_reset_pct * 100:.0f}%")
     print("-" * 50)
-    # --- 👆👆👆 추가 완료 --- 👆👆👆
     print(f"  - 🚨 총 청산 발생 횟수: {len(liquidation_events)} 회")
     if liquidation_events:
         for i, liq_time in enumerate(liquidation_events):
@@ -345,16 +338,8 @@ def simulate_futures_dynamic( # 함수 이름 변경
         logging.warning("⚠️ 백테스트 결과 데이터가 비어있어 요약을 생성할 수 없습니다.")
     else:
         for i, (segment_df, start_dt, end_dt, seg_cash, was_liq) in enumerate(master_report_segments):
-            _generate_segment_summary(
-                segment_df=segment_df,
-                segment_start_dt=start_dt,
-                segment_end_dt=end_dt,
-                initial_cash_segment=seg_cash,
-                was_liquidated=was_liq,
-                segment_number=i + 1
-            )
+            _generate_segment_summary(segment_df=segment_df, segment_start_dt=start_dt, segment_end_dt=end_dt, initial_cash_segment=seg_cash, was_liquidated=was_liq, segment_number=i + 1)
 
-    # --- 👇👇👇 파일 저장 로직 복원 👇👇👇 ---
     if save_full_log:
         logging.info(f"ℹ️ 전체 로그 파일 저장 시도 중...")
         try:
@@ -372,15 +357,13 @@ def simulate_futures_dynamic( # 함수 이름 변경
             logging.error(f"❌ 백테스트 결과 파일 저장 실패: {e}")
     else:
         logging.info("ℹ️ 전체 로그 파일 저장을 건너뛰었습니다 (설정).")
-    # --- 👆👆👆 복원 완료 --- 👆👆👆
 
-    # --- 최종 결과 딕셔너리 반환 ---
     final_stats = {}
     if master_report_segments:
         last_segment_df, _, _, seg_cash, was_liquidated_in_last_segment = master_report_segments[-1]
         if not last_segment_df.empty:
             final_balance = last_segment_df['총 자산(Equity)'].iloc[-1]
-            total_pnl_pct = ((final_balance - original_initial_cash) / original_initial_cash) * 100 # 원본 초기 자본 기준
+            total_pnl_pct = ((final_balance - original_initial_cash) / original_initial_cash) * 100
             peak = last_segment_df['총 자산(Equity)'].cummax()
             drawdown = (last_segment_df['총 자산(Equity)'] - peak) / peak
             mdd_pct = drawdown.min() * 100
@@ -417,21 +400,21 @@ def simulate_futures_dynamic( # 함수 이름 변경
             return_mdd_ratio = total_pnl_pct / abs(mdd_pct) if mdd_pct < 0 else np.inf
 
             final_stats = {
-                'Final Balance': final_balance + accumulated_profit, # 누적 수익 합산
-                'Total PNL %': ((final_balance + accumulated_profit - original_initial_cash) / original_initial_cash) * 100, # 누적 수익 합산
+                'Final Balance': final_balance + accumulated_profit,
+                'Total PNL %': ((final_balance + accumulated_profit - original_initial_cash) / original_initial_cash) * 100,
                 'Win Rate': win_rate,
                 'MDD %': mdd_pct,
                 'Total Trades': total_trades,
                 'Liquidations': len(liquidation_events),
                 'Profit Factor': profit_factor,
                 'Return/MDD': return_mdd_ratio,
-                'Accumulated Profit': accumulated_profit, # 누적 수익 별도 추가
-                'Reset Count': reset_count # 리셋 횟수 추가
+                'Accumulated Profit': accumulated_profit,
+                'Reset Count': reset_count
             }
         else:
              final_stats = {
-                'Final Balance': seg_cash + accumulated_profit, # 누적 수익 합산
-                'Total PNL %': ((seg_cash + accumulated_profit - original_initial_cash) / original_initial_cash) * 100, # 누적 수익 합산
+                'Final Balance': seg_cash + accumulated_profit,
+                'Total PNL %': ((seg_cash + accumulated_profit - original_initial_cash) / original_initial_cash) * 100,
                 'Win Rate': 0, 'MDD %': 0,
                 'Total Trades': 0, 'Liquidations': len(liquidation_events),
                 'Profit Factor': 0, 'Return/MDD': 0,
@@ -440,8 +423,8 @@ def simulate_futures_dynamic( # 함수 이름 변경
             }
     else:
         final_stats = {
-            'Final Balance': initial_cash + accumulated_profit, # 누적 수익 합산
-            'Total PNL %': ((initial_cash + accumulated_profit - original_initial_cash) / original_initial_cash) * 100, # 누적 수익 합산
+            'Final Balance': initial_cash + accumulated_profit,
+            'Total PNL %': ((initial_cash + accumulated_profit - original_initial_cash) / original_initial_cash) * 100,
             'Win Rate': 0, 'MDD %': 0,
             'Total Trades': 0, 'Liquidations': len(liquidation_events),
             'Profit Factor': 0, 'Return/MDD': 0,

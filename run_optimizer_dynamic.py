@@ -10,20 +10,15 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 
 # --- 1. 최적화할 파라미터 범위 정의 ---
 param_grid = {
-    # 'profit_reset_pct': [1.0, 2.0, 3.0],  # 100%, 200%, 300% 수익 시 리셋
-    # 'liquidation_safety_factor': [1.2, 1.5],
-    # 기존 파라미터들...
-    # 'leverage': [5, 10],
-    # 'small_flow_units': [2, 3],
-    # 'large_flow_units': [10, 14],
-    # 'small_flow_pct': [0.04, 0.05, 0.06],
-    # 'large_flow_pct': [0.17, 0.20],
-    # 'take_profit_pct': [0.005, 0.01],
+    # 'enable_rebalance': [True, False],
+    # 'take_profit_pct': [0.006, 0.007],
 }
 
 # --- 2. 백테스트 기본 설정 ---
 base_settings = {
-    "enable_dynamic_unit": False,  # 동적 유닛 활성화
+    "enable_dynamic_unit": False,
+    "enable_rebalance": True,
+    "initial_entry_units": 1.0,  # 초기 매수 배수 추가
     "save_full_log": False,
     "liquidation_safety_factor": 1.5,
     "profit_reset_pct": 1.0,
@@ -32,7 +27,7 @@ base_settings = {
     "sell_fee": 0.0004,
     "maintenance_margin_rate": 0.005,
     "slippage_pct": 0.0005,
-    "market": "ETHUSDT",
+    "market": "BTCUSDT",
     "start": "2020-01-01 00:00:00",
     "end": "2025-12-04 23:59:59",
     "unit_size": 150,
@@ -40,7 +35,7 @@ base_settings = {
     "large_flow_units": 10,
     'small_flow_pct': 0.04,
     'large_flow_pct': 0.17,
-    'take_profit_pct': 0.005,
+    'take_profit_pct': 0.006,
     "leverage": 5,
 }
 
@@ -89,7 +84,7 @@ def run_optimizer_dynamic():
     results_df.replace([np.inf, -np.inf], 'inf', inplace=True)
 
     display_columns = param_names + [
-        'Final Balance', 'Total PNL %', 'Accumulated Profit', 'Return/MDD', 
+        'Final Balance', 'Total PNL %', 'Accumulated Profit', 'Reset Count', 'Return/MDD', 
         'Profit Factor', 'MDD %', 'Win Rate', 'Total Trades', 'Liquidations'
     ]
     display_columns = [col for col in display_columns if col in results_df.columns]

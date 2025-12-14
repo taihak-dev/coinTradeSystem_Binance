@@ -77,12 +77,9 @@ def notify_position_summary(summary: dict):
     """주기적인 포지션 및 계좌 요약 알림"""
     msg = "*[📊 포지션/계좌 현황 요약]*\n\n"
 
-    # --- 👇👇👇 여기가 수정된 부분입니다 👇👇👇 ---
-    # 'total_portfolio_value' -> 'total_wallet_balance' 로 키 이름 변경
     total_balance = summary.get('total_wallet_balance')
     if total_balance is not None:
         msg += f"💰 **총 자산 가치:** `{total_balance:.2f}` USDT\n"
-    # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
 
     msg += f"💵 **사용 가능 USDT:** `{summary.get('usdt_balance'):.2f}` USDT\n"
     msg += f"📈 **총 미실현 손익:** `{summary.get('total_unrealized_pnl'):.2f}` USDT\n"
@@ -121,3 +118,22 @@ def notify_liquidation_warning(market, current_price, liquidation_price, entry_p
     msg += f"  현재 손실률: `{roe:.2f}`%"
 
     send_telegram_message(msg)
+
+# --- 👇👇👇 HWM 알림 함수 추가 👇👇👇 ---
+def notify_hwm_event(event_type: str, market: str, price: float, old_price: float = 0.0):
+    """HWM 갱신 또는 리셋 알림"""
+    if event_type == "갱신":
+        icon = "📈"
+        title = "HWM 갱신"
+        msg = f"{icon} *[{title}]* `{market}`\n"
+        msg += f"  `{old_price:.4f}` -> `{price:.4f}`"
+    elif event_type == "리셋":
+        icon = "🔄"
+        title = "HWM 리셋"
+        msg = f"{icon} *[{title}]* `{market}`\n"
+        msg += f"  리셋 가격: `{price:.4f}`"
+    else:
+        return
+
+    send_telegram_message(msg)
+# --- 👆👆👆 추가 완료 --- 👆👆👆

@@ -7,17 +7,18 @@ import sys
 import config
 from utils.telegram_notifier import notify_order_event, notify_error
 from datetime import datetime
+from manager.hwm_manager import hwm_manager
 
 if config.EXCHANGE == 'binance':
     print("[SYSTEM] Buy Entry: 바이낸스 모드로 설정합니다.")
     from api.binance.order import get_order_result, cancel_order
     from api.binance.price import get_current_ask_price
-    from api.binance.account import get_accounts  # 바이낸스 계좌 조회 함수 import
+    from api.binance.account import get_accounts
 elif config.EXCHANGE == 'bybit':
     print("[SYSTEM] Buy Entry: 바이빗 모드로 설정합니다.")
     from api.bybit.order import get_order_result, cancel_order
     from api.bybit.price import get_current_ask_price
-    from api.bybit.account import get_accounts  # 바이빗 계좌 조회 함수 import
+    from api.bybit.account import get_accounts
 else:
     raise ValueError(f"지원하지 않는 거래소입니다: {config.EXCHANGE}")
 
@@ -45,9 +46,13 @@ def update_buy_log_status(buy_log_df: pd.DataFrame) -> pd.DataFrame:
                 print(f"  - 주문 상태 변경 감지: {market} (UUID: {uuid}) -> {current_state}")
                 buy_log_df.loc[idx, 'filled'] = current_state
                 if current_state == 'done':
+                    avg_price = float(order_info.get('avg_price', 0))
+                    # --- 👇👇👇 HWM 리셋 로직 추가 👇👇👇 ---
+                    hwm_manager.reset_hwm(market, avg_price)
+                    # --- 👆👆👆 추가 완료 --- 👆👆👆
                     details = {
                         'filled_qty': order_info.get('executed_qty', 0),
-                        'price': order_info.get('avg_price', 0),
+                        'price': avg_price,
                         'total_amount': order_info.get('cum_quote', 0), 'fee': 0
                     }
                     notify_order_event("체결", market, details)
@@ -61,7 +66,7 @@ def update_buy_log_status(buy_log_df: pd.DataFrame) -> pd.DataFrame:
 def run_buy_entry_flow(current_unit_size: float):
     try:
         setting_df = pd.read_csv("setting.csv")
-        buy_log_df = pd.read_csv("buy_log.csv") if os.path.exists("buy_log.csv") else pd.DataFrame()
+        buy_log_df = pd.read_csv("buy_log.csv") if os.path.exists("buy_log.csv") else pd.DataFrame(columns=["time", "market", "target_price", "buy_amount", "buy_units", "buy_type", "buy_uuid", "base_unit_size", "filled"])
     except Exception as e:
         print(f"❌ 설정 또는 로그 파일 로드 실패: {e}")
         return
@@ -90,12 +95,16 @@ def run_buy_entry_flow(current_unit_size: float):
     current_prices = {}
     for market in markets_to_check:
         try:
-            current_prices[market] = get_current_ask_price(market)
+            price = get_current_ask_price(market)
+            current_prices[market] = price
+            # --- 👇👇👇 HWM 갱신 로직 추가 👇👇👇 ---
+            if market in holdings: # 포지션이 있을 때만 HWM 갱신
+                hwm_manager.update_hwm(market, price)
+            # --- 👆👆👆 추가 완료 --- 👆👆👆
         except Exception as e:
             print(f"❌ {market} 현재가 조회 실패: {e}")
             current_prices[market] = None
 
-    # setting_df에 동적으로 계산된 unit_size를 업데이트
     setting_df['unit_size'] = current_unit_size
 
     new_orders_df = generate_buy_orders(setting_df, buy_log_df, current_prices, holdings, usdt_balance)

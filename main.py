@@ -8,6 +8,7 @@ import sys
 import config
 from datetime import datetime
 from dotenv import load_dotenv
+from manager.hwm_manager import hwm_manager # HWM 매니저 임포트
 
 load_dotenv()
 

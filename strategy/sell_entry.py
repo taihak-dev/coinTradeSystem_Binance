@@ -10,6 +10,7 @@ from manager.order_executor import execute_sell_orders
 from strategy.casino_strategy import generate_sell_orders
 from utils.common_utils import get_current_holdings
 from utils.telegram_notifier import notify_order_event, notify_error
+from manager.hwm_manager import hwm_manager
 
 if config.EXCHANGE == 'binance':
     logging.info("[SYSTEM] Sell Entry: 바이낸스 모드로 설정합니다.")
@@ -48,6 +49,10 @@ def update_sell_log_status(sell_log_df: pd.DataFrame) -> pd.DataFrame:
                 sell_log_df.loc[idx, 'filled'] = current_state
 
                 if current_state == 'done':
+                    # --- 👇👇👇 HWM 리셋 로직 추가 👇👇👇 ---
+                    hwm_manager.reset_hwm(market, 0)
+                    # --- 👆👆👆 추가 완료 --- 👆👆👆
+
                     avg_buy_price = float(row.get('avg_buy_price', 0))
                     filled_qty = float(order_info.get('executed_qty', 0))
                     avg_sell_price = float(order_info.get('avg_price', 0))
@@ -111,9 +116,7 @@ def run_sell_entry_flow():
         combined_sell_log_df = pd.concat([sell_log_df_filtered, orders_to_action_df], ignore_index=True)
 
         try:
-            # --- 👇👇👇 여기가 수정된 부분입니다 (setting_df를 함께 전달) 👇👇👇 ---
             final_sell_log_df = execute_sell_orders(combined_sell_log_df, setting_df)
-            # --- 👆👆👆 여기까지 수정 완료 --- 👆👆👆
             final_sell_log_df.to_csv("sell_log.csv", index=False)
             logging.info("[sell_entry.py] sell_log.csv 파일 저장 완료.")
         except Exception as e:

@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 import numpy as np
 import config
+from manager.hwm_manager import hwm_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -27,7 +28,7 @@ def get_last_large_flow_or_initial_price(market_buy_log: pd.DataFrame) -> float 
 
 
 def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, current_prices: dict, holdings: dict,
-                        usdt_balance: float) -> pd.DataFrame:
+                        usdt_balance: float, enable_rebalance: bool = False) -> pd.DataFrame:
     new_orders = []
 
     for _, setting in setting_df.iterrows():
@@ -46,37 +47,35 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
 
         market_buy_log = buy_log_df[buy_log_df["market"] == market] if not buy_log_df.empty else pd.DataFrame()
 
-        # --- 최초 매수 로직 ---
         if market_buy_log.empty and market not in holdings:
-            buy_amount = float(setting["unit_size"])
+            base_unit_size = float(setting["unit_size"])
+            initial_entry_multiplier = float(setting.get("initial_entry_units", 1.0))
+            buy_amount = base_unit_size * initial_entry_multiplier
+            
             required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
 
             if usdt_balance >= required_margin:
-                logging.info(f"🆕 {market}: 최초 매수 주문 생성을 시도합니다. (Unit Size: {buy_amount:.2f})")
+                logging.info(f"🆕 {market}: 최초 매수 주문 생성을 시도합니다. (Buy Amount: {buy_amount:.2f}, Base Unit: {base_unit_size})")
                 new_orders.append({
                     "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                     "target_price": current_price, "buy_amount": buy_amount,
                     "buy_units": 0, "buy_type": "initial", "filled": "update",
-                    "base_unit_size": buy_amount  # 최초 진입 시의 unit_size 기록
+                    "base_unit_size": base_unit_size
                 })
             else:
                 logging.warning(
                     f"⚠️ {market} 최초 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
             continue
 
-        # --- 물타기 기준 unit_size 조회 ---
         base_unit_size_for_flow = None
         if not market_buy_log.empty:
             initial_buys = market_buy_log[market_buy_log['buy_type'] == 'initial']
             if not initial_buys.empty:
-                # 가장 최근 initial 주문에 기록된 base_unit_size를 사용
                 base_unit_size_for_flow = initial_buys.iloc[-1].get('base_unit_size')
 
-        # 만약 기록이 없다면 (오래된 buy_log 호환), 현재 설정의 unit_size를 안전하게 사용
         if pd.isna(base_unit_size_for_flow):
             base_unit_size_for_flow = float(setting["unit_size"])
 
-        # --- 기준가 확인 ---
         last_small_flow_price = get_last_small_flow_or_initial_price(market_buy_log)
         last_large_flow_price = get_last_large_flow_or_initial_price(market_buy_log)
 
@@ -84,55 +83,54 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             logging.debug(f"ℹ️ {market}: 이전 체결 기록이 부족하여 추가 매수 주문을 생성하지 않습니다.")
             continue
 
-        # --- small_flow 로직 ---
-        small_flow_multiplier = float(setting["small_flow_units"])
-        small_target_price = round(last_small_flow_price * (1 - float(setting["small_flow_pct"])), 8)
+        hwm = hwm_manager.get_hwm(market)
+        small_flow_pct = float(setting["small_flow_pct"])
+        large_flow_pct = float(setting["large_flow_pct"])
+        
+        rebalance_small_target_price = None
+        if enable_rebalance and hwm > last_small_flow_price * (1 + (small_flow_pct * 0.5)):
+            rebalance_small_target_price = round(hwm * (1 - small_flow_pct), 8)
+            logging.info(f"🔄 [Rebalance] {market}: small_flow HWM({hwm}) 기반 타겟 조정 -> {rebalance_small_target_price} (기존 매수가: {last_small_flow_price})")
 
+        rebalance_large_target_price = None
+        if enable_rebalance and hwm > last_large_flow_price * (1 + (large_flow_pct * 0.5)):
+            rebalance_large_target_price = round(hwm * (1 - large_flow_pct), 8)
+            logging.info(f"🔄 [Rebalance] {market}: large_flow HWM({hwm}) 기반 타겟 조정 -> {rebalance_large_target_price} (기존 매수가: {last_large_flow_price})")
+
+        small_target_price = rebalance_small_target_price if rebalance_small_target_price is not None else round(last_small_flow_price * (1 - small_flow_pct), 8)
+        large_target_price = rebalance_large_target_price if rebalance_large_target_price is not None else round(last_large_flow_price * (1 - large_flow_pct), 8)
+        
         if current_price <= small_target_price:
-            if not market_buy_log[
-                (market_buy_log["buy_type"] == "small_flow") &
-                (market_buy_log["filled"].isin(["wait", "update"]))
-            ].empty:
+            if not market_buy_log[(market_buy_log["buy_type"] == "small_flow") & (market_buy_log["filled"].isin(["wait", "update"]))].empty:
                 logging.debug(f"ℹ️ {market}: 이미 대기 중인 small_flow 주문이 있어 건너뜁니다.")
             else:
-                buy_amount = base_unit_size_for_flow * small_flow_multiplier # 고정된 unit_size 사용
+                buy_amount = base_unit_size_for_flow * float(setting["small_flow_units"])
                 required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
-
                 if usdt_balance >= required_margin:
                     new_orders.append({
                         "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                         "target_price": small_target_price, "buy_amount": buy_amount,
                         "buy_units": 1, "buy_type": "small_flow", "filled": "update",
-                        "base_unit_size": np.nan # 물타기 주문에는 기록하지 않음
+                        "base_unit_size": np.nan
                     })
                 else:
-                    logging.warning(
-                        f"⚠️ {market} small_flow 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
-
-        # --- large_flow 로직 ---
-        large_flow_multiplier = float(setting["large_flow_units"])
-        large_target_price = round(last_large_flow_price * (1 - float(setting["large_flow_pct"])), 8)
+                    logging.warning(f"⚠️ {market} small_flow 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
 
         if current_price <= large_target_price:
-            if not market_buy_log[
-                (market_buy_log["buy_type"] == "large_flow") &
-                (market_buy_log["filled"].isin(["wait", "update"]))
-            ].empty:
+            if not market_buy_log[(market_buy_log["buy_type"] == "large_flow") & (market_buy_log["filled"].isin(["wait", "update"]))].empty:
                 logging.debug(f"ℹ️ {market}: 이미 대기 중인 large_flow 주문이 있어 건너뜁니다.")
             else:
-                buy_amount = base_unit_size_for_flow * large_flow_multiplier # 고정된 unit_size 사용
+                buy_amount = base_unit_size_for_flow * float(setting["large_flow_units"])
                 required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
-
                 if usdt_balance >= required_margin:
                     new_orders.append({
                         "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                         "target_price": large_target_price, "buy_amount": buy_amount,
                         "buy_units": 1, "buy_type": "large_flow", "filled": "update",
-                        "base_unit_size": np.nan # 물타기 주문에는 기록하지 않음
+                        "base_unit_size": np.nan
                     })
                 else:
-                    logging.warning(
-                        f"⚠️ {market} large_flow 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
+                    logging.warning(f"⚠️ {market} large_flow 매수 실패 (잔고 부족). 필요 증거금(버퍼 포함): {required_margin:.2f}, 보유: {usdt_balance:.2f}")
 
     return pd.DataFrame(new_orders)
 
@@ -150,8 +148,7 @@ def generate_sell_orders(setting_df: pd.DataFrame, holdings: dict, sell_log_df: 
             info, setting = holdings[market], setting_df[setting_df['market'] == market].iloc[0]
             avg_buy_price, quantity_to_sell = info['avg_price'], info['balance']
             target_price = round(avg_buy_price * (1 + float(setting['take_profit_pct'])), 8)
-            if not np.isclose(row['target_sell_price'], target_price) or not np.isclose(row['quantity'],
-                                                                                        quantity_to_sell):
+            if not np.isclose(row['target_sell_price'], target_price) or not np.isclose(row['quantity'], quantity_to_sell):
                 row['target_sell_price'], row['quantity'], row['filled'] = target_price, quantity_to_sell, 'update'
                 orders_to_action.append(row.to_dict())
 

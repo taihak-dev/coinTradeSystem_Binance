@@ -2,10 +2,10 @@
 
 import logging
 from api.bybit.client import get_bybit_client
-from decimal import Decimal, getcontext
+from decimal import Decimal, getcontext, ROUND_HALF_UP
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format='%(asctime=s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 거래소 규칙 캐싱을 위한 변수 ---
 _instrument_info_cache = {}
@@ -67,7 +67,8 @@ def adjust_price_to_tick(symbol: str, price: float) -> float:
 
 def adjust_quantity_to_step(symbol: str, quantity: float) -> float:
     """
-    Bybit의 수량 규칙(qtyStep)에 맞게 수량을 조정합니다. (핵심 수정)
+    Bybit의 수량 규칙(qtyStep)에 맞게 수량을 조정합니다.
+    목표 금액과의 오차를 줄이기 위해 내림(Floor) 대신 반올림(Round)을 사용합니다.
     """
     try:
         info = get_instrument_info(symbol)
@@ -76,8 +77,10 @@ def adjust_quantity_to_step(symbol: str, quantity: float) -> float:
         quantity_dec = Decimal(str(quantity))
         qty_step_dec = Decimal(qty_step_str)
 
-        # qtyStep의 배수로 수량을 조정 (내림 처리하여 주문 거부 방지)
-        adjusted_quantity_dec = (quantity_dec / qty_step_dec).to_integral_value(rounding='ROUND_DOWN') * qty_step_dec
+        # --- 👇👇👇 수정된 부분: 반올림(ROUND_HALF_UP) 적용 👇👇👇 ---
+        # qtyStep의 배수로 수량을 조정 (반올림 처리하여 목표 금액 오차 최소화)
+        adjusted_quantity_dec = (quantity_dec / qty_step_dec).to_integral_value(rounding=ROUND_HALF_UP) * qty_step_dec
+        # --- 👆👆👆 수정 완료 --- 👆👆👆
 
         # 최소/최대 주문 수량 확인
         min_qty = Decimal(info['lotSizeFilter']['minOrderQty'])
@@ -90,7 +93,12 @@ def adjust_quantity_to_step(symbol: str, quantity: float) -> float:
 
         adjusted_quantity_dec = min(adjusted_quantity_dec, max_qty)
 
-        adjusted_quantity = float(adjusted_quantity_dec)
+        # --- 👇👇👇 수정된 부분: 소수점 자릿수 보정 👇👇👇 ---
+        # 부동소수점 오차 제거를 위해 qtyStep의 자릿수만큼 round 처리
+        precision = len(qty_step_str.split('.')[1]) if '.' in qty_step_str else 0
+        adjusted_quantity = round(float(adjusted_quantity_dec), precision)
+        # --- 👆👆👆 수정 완료 --- 👆👆👆
+
         if quantity != adjusted_quantity:
             logging.debug(f"🔢 {symbol} 수량 조정: {quantity} -> {adjusted_quantity}")
         return adjusted_quantity

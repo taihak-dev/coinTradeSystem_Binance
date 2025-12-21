@@ -9,9 +9,9 @@ import config
 from datetime import datetime
 from dotenv import load_dotenv
 from manager.hwm_manager import hwm_manager
-from manager.cooldown_manager import cooldown_manager # 쿨다운 매니저 임포트
-from manager.order_executor import close_all_positions # 전체 청산 함수 임포트
-from utils.telegram_notifier import send_telegram_message # 일반 메시지 전송용
+from manager.cooldown_manager import cooldown_manager
+from manager.order_executor import close_all_positions
+from utils.telegram_notifier import send_telegram_message
 
 load_dotenv()
 
@@ -38,8 +38,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 last_health_check_time = 0
 last_summary_time = 0
 last_liquidation_warning_times = {}
-last_profit_reset_alert_time = 0 # 수익 리셋 알림 중복 방지용
-last_margin_refill_alert_time = 0 # 증거금 보충 알림 중복 방지용
+last_profit_reset_alert_time = 0
+last_margin_refill_alert_time = 0
 
 
 def check_and_notify_status(account_data: dict):
@@ -83,12 +83,11 @@ def check_and_notify_status(account_data: dict):
                         notify_liquidation_warning(market, mark_price, liquidation_price, entry_price, roe, 2)
                         last_liquidation_warning_times.setdefault(market, {})['level2'] = current_time
         
-        # 4. 수익 리셋 알림 (단순 알림만)
-        total_equity = account_data.get('total_equity', 0)
+        # 4. 수익 리셋 알림
+        total_equity = account_data.get('total_wallet_balance', 0)
         target_equity = config.ORIGINAL_INITIAL_CASH * (1 + config.PROFIT_RESET_TARGET)
         
         if total_equity >= target_equity:
-            # 1시간(3600초)마다 알림
             if current_time - last_profit_reset_alert_time >= 3600:
                 msg = f"🎉 *[목표 수익 달성]*\n"
                 msg += f"현재 자산: `{total_equity:.2f}` USDT\n"
@@ -114,22 +113,18 @@ def main():
             logging.info("=" * 50)
 
             account_data = get_accounts()
-            total_equity = account_data.get('total_equity', 0)
+            # --- 👇👇👇 키 이름 수정 👇👇👇 ---
+            total_equity = account_data.get('total_wallet_balance', 0)
+            # --- 👆👆👆 수정 완료 --- 👆👆👆
             
-            # --- 👇👇👇 쿨다운 및 손절 로직 추가 👇👇👇 ---
-            
-            # 1. 쿨다운 상태 확인
             if cooldown_manager.is_cooldown_active():
                 end_time = cooldown_manager.get_end_time()
                 
-                # 쿨다운 시간이 지났는지 확인 (24시간 경과)
                 if end_time and datetime.now() >= end_time:
-                    # 증거금 충족 여부 확인
                     if total_equity >= config.ORIGINAL_INITIAL_CASH:
                         cooldown_manager.end_cooldown()
                         send_telegram_message("🔥 *[쿨다운 종료]*\n증거금이 충족되어 매매를 재개합니다.")
                     else:
-                        # 증거금 부족 알림 (1시간마다)
                         current_time = time.time()
                         if current_time - last_margin_refill_alert_time >= 3600:
                             shortage = config.ORIGINAL_INITIAL_CASH - total_equity
@@ -149,34 +144,24 @@ def main():
                     time.sleep(config.RUN_INTERVAL_SECONDS)
                     continue
 
-            # 2. 손절 조건 확인
-            stop_loss_level = config.ORIGINAL_INITIAL_CASH * (1 - config.STOP_LOSS_THRESHOLD) # 예: 3000 * (1 - 0.35) = 1950
-            # 주의: STOP_LOSS_THRESHOLD가 0.65라면 (1-0.65)=0.35가 됨. 
-            # config.py에는 STOP_LOSS_THRESHOLD=0.65 (65% 이하 시 손절)로 되어 있음.
-            # 따라서 조건은 total_equity <= config.ORIGINAL_INITIAL_CASH * config.STOP_LOSS_THRESHOLD 가 맞음.
+            stop_loss_level = config.ORIGINAL_INITIAL_CASH * config.STOP_LOSS_THRESHOLD
             
-            if total_equity <= config.ORIGINAL_INITIAL_CASH * config.STOP_LOSS_THRESHOLD:
-                logging.warning(f"🚨 손절 조건 도달! 현재 자산: {total_equity:.2f}, 기준: {config.ORIGINAL_INITIAL_CASH * config.STOP_LOSS_THRESHOLD:.2f}")
+            if total_equity <= stop_loss_level:
+                logging.warning(f"🚨 손절 조건 도달! 현재 자산: {total_equity:.2f}, 기준: {stop_loss_level:.2f}")
                 
-                # 모든 포지션 청산
                 close_all_positions()
-                
-                # 쿨다운 시작
                 cooldown_manager.start_cooldown()
                 
-                # 알림 전송
                 msg = f"🚨 *[손절 실행 및 쿨다운]*\n"
                 msg += f"자산이 손절 기준 이하로 하락하여 모든 포지션을 청산하고 매매를 중단합니다.\n"
                 msg += f"현재 자산: `{total_equity:.2f}` USDT\n"
-                msg += f"손절 기준: `{config.ORIGINAL_INITIAL_CASH * config.STOP_LOSS_THRESHOLD:.2f}` USDT\n"
+                msg += f"손절 기준: `{stop_loss_level:.2f}` USDT\n"
                 msg += f"쿨다운 종료 예정: {cooldown_manager.get_end_time()}"
                 send_telegram_message(msg)
                 
                 time.sleep(config.RUN_INTERVAL_SECONDS)
                 continue
             
-            # --- 👆👆👆 추가 완료 --- 👆👆👆
-
             check_and_notify_status(account_data)
 
             try:

@@ -10,9 +10,11 @@ from binance.error import ClientError as BinanceClientError
 # --- 거래소별 함수 임포트 ---
 if config.EXCHANGE == 'binance':
     from api.binance.order import send_order, cancel_order
+    from api.binance.account import get_accounts
     from utils.binance_price_utils import adjust_price_to_tick, adjust_quantity_to_step
 elif config.EXCHANGE == 'bybit':
     from api.bybit.order import send_order, cancel_order
+    from api.bybit.account import get_accounts
     from utils.bybit_price_utils import adjust_price_to_tick, adjust_quantity_to_step
 else:
     raise ValueError(f"지원하지 않는 거래소입니다: {config.EXCHANGE}")
@@ -45,8 +47,6 @@ def execute_buy_orders(buy_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> pd
                 logging.warning(f"⚠️ [{market}] 계산된 주문 수량이 0 이하이므로 주문을 건너뜁니다.")
                 continue
 
-            # order_type 결정 로직을 제거하고, send_order 호출을 단순화합니다.
-            # price는 api/bybit/order.py에서 시장가일 경우 무시하므로 항상 전달합니다.
             new_uuid = send_order(
                 market=market,
                 side="bid",
@@ -79,7 +79,7 @@ def execute_sell_orders(sell_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> 
                 try:
                     cancel_order(market, old_uuid)
                 except (BybitInvalidRequestError, BinanceClientError) as e:
-                    if isinstance(e, BinanceClientError) and e.error_code == -2011:  # Unknown order sent.
+                    if isinstance(e, BinanceClientError) and e.error_code == -2011:
                         logging.warning(f"⚠️ [{market}] 이전 매도 주문 취소 불필요 (주문 ID: {old_uuid}, 이미 처리된 주문).")
                     else:
                         logging.warning(f"⚠️ [{market}] 이전 매도 주문 취소 실패 (이미 체결/취소되었을 수 있음): {e}")
@@ -108,3 +108,38 @@ def execute_sell_orders(sell_log_df: pd.DataFrame, setting_df: pd.DataFrame) -> 
             continue
 
     return sell_log_df
+
+# --- 👇👇👇 모든 포지션 청산 함수 추가 👇👇👇 ---
+def close_all_positions():
+    """
+    현재 보유 중인 모든 포지션을 시장가로 청산합니다.
+    """
+    logging.warning("🚨 모든 포지션에 대한 시장가 청산을 시도합니다.")
+    try:
+        account_data = get_accounts()
+        open_positions = account_data.get("open_positions", [])
+        
+        if not open_positions:
+            logging.info("✅ 청산할 포지션이 없습니다.")
+            return
+
+        for pos in open_positions:
+            market = pos['symbol']
+            quantity = abs(float(pos.get('positionAmt', 0)))
+            
+            if quantity > 0:
+                try:
+                    logging.info(f"  - [{market}] 포지션 청산 시도. 수량: {quantity}")
+                    # 시장가 청산을 위해 price=0 또는 None으로 설정
+                    send_order(market=market, side="ask", price=0, quantity=quantity)
+                    notify_order_event("제출", market, {"type": "시장가 청산", "quantity": quantity})
+                except Exception as e:
+                    logging.error(f"❌ [{market}] 포지션 청산 주문 실패: {e}")
+                    notify_error("Close Position", f"[{market}] 포지션 청산 실패: {e}")
+        
+        logging.info("✅ 모든 포지션에 대한 청산 주문 제출 완료.")
+
+    except Exception as e:
+        logging.error(f"❌ 포지션 정보 조회 또는 청산 중 심각한 오류 발생: {e}", exc_info=True)
+        notify_error("Close All Positions", f"전체 포지션 청산 실패: {e}")
+# --- 👆👆👆 추가 완료 --- 👆👆👆

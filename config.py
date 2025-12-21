@@ -35,16 +35,14 @@ LIQUIDATION_WARNING_PCT_1 = float(os.getenv("LIQUIDATION_WARNING_PCT_1", "0.10")
 LIQUIDATION_WARNING_PCT_2 = float(os.getenv("LIQUIDATION_WARNING_PCT_2", "0.05"))
 
 # --- 위험 관리 설정 ---
-# .env 파일에서 MARGIN_BUFFER_FACTOR 값을 읽어옴. (숫자 타입으로 변환)
-# .env 파일에 값이 없으면 기본값으로 2.0을 사용
 MARGIN_BUFFER_FACTOR = float(os.getenv("MARGIN_BUFFER_FACTOR", "2.0"))
 
-# --- 👇👇👇 동적 유닛 관련 설정 추가 👇👇👇 ---
-# .env 파일에서 기준 시드머니 값을 읽어옴. (숫자 타입으로 변환)
-# .env 파일에 값이 없으면 기본값으로 5000.0을 사용
+# --- 동적 유닛 및 자산 관리 설정 ---
 ORIGINAL_INITIAL_CASH = float(os.getenv("ORIGINAL_INITIAL_CASH", "5000.0"))
 ENABLE_DYNAMIC_UNIT = os.getenv("ENABLE_DYNAMIC_UNIT", "False").lower() in ('true', '1', 't')
-# --- 👆👆👆 추가 완료 --- 👆👆👆
+PROFIT_RESET_TARGET = float(os.getenv("PROFIT_RESET_TARGET", "1.0"))
+STOP_LOSS_THRESHOLD = float(os.getenv("STOP_LOSS_THRESHOLD", "0.65"))
+COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "1440"))
 
 # (참고) 기존 업비트 설정은 사용되지 않지만, 호환성을 위해 남겨둡니다.
 UPBIT_OPEN_API_ACCESS_KEY = os.getenv("UPBIT_OPEN_API_ACCESS_KEY")

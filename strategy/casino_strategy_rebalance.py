@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 import numpy as np
 import config
+from manager.hwm_manager import hwm_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -48,13 +49,13 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
 
         market_buy_log = buy_log_df[buy_log_df["market"] == market] if not buy_log_df.empty else pd.DataFrame()
 
-        if market_buy_log.empty and market not in holdings:
-            # --- 👇👇👇 초기 매수 배수 로직 적용 👇👇👇 ---
+        # --- 👇👇👇 최초 매수 로직 조건 수정 👇👇👇 ---
+        if market_buy_log.empty:
+        # --- 👆👆👆 수정 완료 --- 👆👆👆
             base_unit_size = float(setting["unit_size"])
             initial_entry_multiplier = float(setting.get("initial_entry_units", 1.0))
             buy_amount = base_unit_size * initial_entry_multiplier
-            # --- 👆👆👆 적용 완료 --- 👆👆👆
-
+            
             required_margin = (buy_amount / leverage) * config.MARGIN_BUFFER_FACTOR
 
             if usdt_balance >= required_margin:
@@ -63,7 +64,7 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
                     "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "market": market,
                     "target_price": current_price, "buy_amount": buy_amount,
                     "buy_units": 0, "buy_type": "initial", "filled": "update",
-                    "base_unit_size": base_unit_size  # 배수가 적용되지 않은 순수 unit_size 기록
+                    "base_unit_size": base_unit_size
                 })
             else:
                 logging.warning(
@@ -86,7 +87,7 @@ def generate_buy_orders(setting_df: pd.DataFrame, buy_log_df: pd.DataFrame, curr
             logging.debug(f"ℹ️ {market}: 이전 체결 기록이 부족하여 추가 매수 주문을 생성하지 않습니다.")
             continue
 
-        hwm = high_water_marks.get(market, 0)
+        hwm = hwm_manager.get_hwm(market)
         small_flow_pct = float(setting["small_flow_pct"])
         large_flow_pct = float(setting["large_flow_pct"])
         

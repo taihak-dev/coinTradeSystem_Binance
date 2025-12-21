@@ -1,3 +1,2 @@
-time,market,target_price,buy_amount,buy_units,buy_type,buy_uuid,filled
-2025-10-03 09:31:08,BNBUSDT,1086.9,50.0,0,initial,0d2839f2-ba1f-4ad3-ba3b-893700540068,done
-2025-10-03 09:31:08,ETHUSDT,4469.79,50.0,0,initial,f63071f8-010c-45c3-a5cf-eeef73ba41d4,done
+time,market,target_price,buy_amount,buy_units,buy_type,buy_uuid,base_unit_size,filled
+2025-12-21 17:44:21,BTCUSDT,88573.3,700.0,0,initial,acf8659b-03d2-43ca-b3de-8608eac8c491,350.0,done

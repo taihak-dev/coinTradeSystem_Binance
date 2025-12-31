@@ -13,6 +13,7 @@
 4.  [백테스트 (전략 검증)](#4-백테스트-전략-검증)
 5.  [실전 매매 준비 (설정)](#5-실전-매매-준비-설정)
 6.  [프로그램 실행](#6-프로그램-실행)
+7.  [주요 코드 분석 (개발자용)](#7-주요-코드-분석-개발자용)
 
 ---
 
@@ -70,7 +71,7 @@ pip install -r requirements.txt
 
 과거 데이터를 가지고 전략을 테스트해보기 위해, 거래소에서 캔들(차트) 데이터를 받아옵니다.
 
-1.  `collect_candles.py` (또는 유사한 이름의 수집 스크립트)를 실행합니다.
+1.  `candle_collector_new.py` (또는 유사한 이름의 수집 스크립트)를 실행합니다.
     ```bash
     python candle_collector_new.py
     ```
@@ -178,6 +179,54 @@ python main.py
 
 ### 종료하기
 터미널 창에서 `Ctrl` + `C` 키를 누르면 안전하게 종료됩니다.
+
+---
+
+## 7. 주요 코드 분석 (개발자용)
+
+이 섹션은 프로그램의 내부 구조와 각 파일/함수의 역할을 설명합니다.
+
+### `main.py`
+프로그램의 시작점이자 전체 흐름을 제어하는 지휘관입니다.
+*   **`main()`**:
+    *   **역할**: 무한 루프를 돌며 매매 사이클을 실행하고, 손절/쿨다운 등 최상위 상태를 관리합니다.
+    *   **주요 로직**:
+        1.  계좌 정보(`total_equity`) 조회
+        2.  쿨다운 상태 확인 및 재개 조건 검사
+        3.  손절 조건 확인 및 전체 포지션 청산 명령
+        4.  `check_and_notify_status()` 호출 (주기적 알림)
+        5.  `run_casino_entry()` 호출 (실제 매매 로직 실행)
+
+### `strategy/`
+실제 매매 전략을 결정하는 두뇌 역할을 하는 파일들이 모여있습니다.
+*   **`entry.py` -> `run_casino_entry()`**:
+    *   **역할**: 매수와 매도 로직의 실행 순서를 결정하는 중간 관리자입니다.
+    *   **파라미터**: `current_unit_size` (동적으로 계산된 현재 유닛 사이즈)
+*   **`buy_entry.py` -> `run_buy_entry_flow()`**:
+    *   **역할**: 매수와 관련된 모든 작업을 총괄합니다. (주문 상태 확인, 현재가 조회, HWM 갱신, 신규 주문 생성 요청)
+*   **`sell_entry.py` -> `run_sell_entry_flow()`**:
+    *   **역할**: 매도와 관련된 모든 작업을 총괄합니다. (주문 상태 확인, 익절 주문 생성 요청)
+*   **`casino_strategy.py` -> `generate_buy_orders()`**:
+    *   **역할**: **전략의 핵심.** 모든 상태와 설정값을 바탕으로 'initial', 'small_flow', 'large_flow' 매수 주문을 생성할지 여부를 최종 결정합니다.
+    *   **주요 파라미터**: `setting_df`, `buy_log_df`, `current_prices`, `holdings`, `usdt_balance`
+    *   **반환값**: 생성된 신규 주문 목록 (Pandas DataFrame)
+
+### `manager/`
+봇의 상태를 기억하고, 실제 주문을 실행하는 행동대장 역할을 합니다.
+*   **`order_executor.py` -> `execute_buy_orders()`, `close_all_positions()`**:
+    *   **역할**: 생성된 주문 목록을 받아, 거래소 API를 통해 실제 주문을 전송합니다.
+*   **`hwm_manager.py`**:
+    *   **역할**: `hwm_data.json` 파일을 통해 전고점(HWM)을 영구적으로 관리합니다. 리밸런싱 전략의 핵심입니다.
+*   **`cooldown_manager.py`**:
+    *   **역할**: `cooldown_status.json` 파일을 통해 손절 후 쿨다운 상태를 영구적으로 관리합니다.
+
+### `api/`
+거래소와 직접 통신하는 역할을 담당합니다.
+*   **`bybit/client.py` -> `get_bybit_client()`**:
+    *   **역할**: API 키로 인증된 클라이언트 객체를 생성하고 관리합니다. (싱글톤)
+*   **`bybit/account.py` -> `get_accounts()`**:
+    *   **역할**: 계좌의 모든 정보(총자산, 가용 잔고, 미실현 손익, 현재 포지션 등)를 조회하여 하나의 딕셔너리로 반환합니다.
+    *   **반환값**: `{"total_wallet_balance": ..., "usdt_balance": ..., "open_positions": [...]}`
 
 ---
 

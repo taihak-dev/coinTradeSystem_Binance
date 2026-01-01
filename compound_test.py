@@ -21,7 +21,7 @@ PANIC_SELL_PENALTY = 0.02
 COOLDOWN_MINUTES = 1440
 
 # 최적 파라미터 (기본값)
-MARKET = "XRPUSDT"
+MARKET = "BTCUSDT"
 UNIT_SIZE = 350.0
 TAKE_PROFIT_PCT = 0.006
 SMALL_FLOW_PCT = 0.04
@@ -450,7 +450,7 @@ class CompoundSimulator:
 # --- 6. 메인 실행 함수 ---
 def main():
     scenario = "Full"
-    start_date = "2025-01-01 00:00:00"
+    start_date = "2023-01-01 00:00:00"
     end_date = "2025-12-28 23:59:59"
     
     settings = {

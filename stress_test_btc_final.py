@@ -24,17 +24,17 @@ MARKET = "BTCUSDT"
 
 # --- 2. 그리드 서치 파라미터 설정 (Grid Search Parameters) ---
 GRID_PARAMS = {
-    "UNIT_SIZE": [100.0],
-    "TAKE_PROFIT_PCT": [0.005],
+    "UNIT_SIZE": [350.0],
+    "TAKE_PROFIT_PCT": [0.006],
     "SMALL_FLOW_PCT": [0.04],
     "LARGE_FLOW_PCT": [0.17],
     "INITIAL_UNITS": [2.0],
     "SMALL_FLOW_UNITS": [2.0],
-    "LARGE_FLOW_UNITS": [5.0],
-    "LEVERAGE": [3],
-    "PROFIT_RESET_TARGET": [0.10],
+    "LARGE_FLOW_UNITS": [10.0],
+    "LEVERAGE": [10],
+    "PROFIT_RESET_TARGET": [1.00],
     "MARGIN_BUFFER": [1.5],
-    "SAVE_FULL_LOG": [True]
+    "SAVE_FULL_LOG": [False]
 }
 
 # --- 3. 데이터 로드 함수 ---
@@ -245,8 +245,11 @@ def run_simulation(df, settings):
 # --- 5. 메인 실행 함수 ---
 def main():
     scenarios = [
-        {"name": "A (Bull)", "start": "2020-01-01 00:00:00", "end": "2021-06-01 23:59:59"},
-        {"name": "B (Bear)", "start": "2022-01-01 00:00:00", "end": "2023-12-31 23:59:59"}
+        # {"name": "A (Bull)", "start": "2020-01-01 00:00:00", "end": "2021-06-01 23:59:59"},
+        # {"name": "B (Bear)", "start": "2022-01-01 00:00:00", "end": "2023-12-31 23:59:59"},
+        # {"name": "C (2025 10)", "start": "2025-10-01 00:00:00", "end": "2025-10-30 23:59:59"},
+        # {"name": "D (Full)", "start": "2020-01-01 00:00:00", "end": "2025-12-28 23:59:59"},
+        {"name": "E (최근3년)", "start": "2023-01-01 00:00:00", "end": "2025-12-28 23:59:59"}
     ]
 
     keys = list(GRID_PARAMS.keys())
